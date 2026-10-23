@@ -1,2 +1,28 @@
 node_modules/
 .DS_Store
+
+# Environment files (keep safe, documented examples)
+.env
+.env.*
+!.env.example
+
+# Generated build and test output
+dist/
+build/
+coverage/
+*.tsbuildinfo
+
+# Logs and temporary files
+*.log
+logs/
+tmp/
+temp/
+
+# Local credentials and private keys
+*.pem
+*.key
+*.p12
+*.pfx
+*.crt
+*.cer
+secrets/
