@@ -45,3 +45,25 @@ WooCommerce is installed and activated during WordPress's first initialization.
 Manual M1 checks still required: complete a cash-on-delivery test checkout,
 confirm the resulting order in WooCommerce admin, and verify persistence across
 the relevant pod restarts.
+
+## WooCommerce MCP service (M2)
+
+The custom WooCommerce MCP service exposes a Streamable HTTP endpoint at
+`/mcp`, plus `GET /healthz` and `GET /readyz`. It is designed for an internal
+Kubernetes `ClusterIP` Service only; do not create an Ingress, NodePort, or
+LoadBalancer for it.
+
+Required environment variables:
+
+```text
+WOOCOMMERCE_BASE_URL=http://urumi-store-wordpress.urumi.svc.cluster.local
+WOOCOMMERCE_CONSUMER_KEY=<WooCommerce REST API consumer key>
+WOOCOMMERCE_CONSUMER_SECRET=<WooCommerce REST API consumer secret>
+```
+
+Optional values are `PORT` (default `3000`) and
+`WOOCOMMERCE_REQUEST_TIMEOUT_MS` (default `10000`, accepted range 100–30000).
+Create the REST key in WooCommerce admin with the minimum required read/write
+permission, then mount it into the MCP workload from a dedicated Kubernetes
+Secret. Do not add its values to Helm values, `.env.example`, source code,
+tests, or logs.
