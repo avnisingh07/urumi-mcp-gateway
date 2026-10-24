@@ -26,3 +26,6 @@ temp/
 *.crt
 *.cer
 secrets/
+
+# Downloaded Helm dependency archives
+deploy/helm/**/charts/

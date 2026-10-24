@@ -1,0 +1,10 @@
+apiVersion: v2
+name: urumi
+description: Local Helm deployment for the Urumi WooCommerce store
+type: application
+version: 0.1.0
+appVersion: "1.0"
+dependencies:
+  - name: wordpress
+    version: 33.0.12
+    repository: oci://registry-1.docker.io/bitnamicharts
