@@ -40,6 +40,16 @@ wordpress:
       #!/bin/bash
       set -euo pipefail
       wp plugin install woocommerce --activate --allow-root
+  # Keep the storefront on its existing HTTP ingress, while enabling TLS only
+  # for the in-cluster MCP-to-WordPress connection.
+  extraVolumes:
+    - name: internal-tls
+      secret:
+        secretName: urumi-store-wordpress-internal-tls
+  extraVolumeMounts:
+    - name: internal-tls
+      mountPath: /certs
+      readOnly: true
   mariadb:
     architecture: standalone
     auth:
@@ -64,3 +74,28 @@ wordpress:
         enabled: true
       readinessProbe:
         enabled: true
+
+
+woocommerceMcp:
+  enabled: true
+  replicaCount: 1
+  image:
+    repository: urumi-woocommerce-mcp
+    tag: m2-tlsfix-r2
+    pullPolicy: IfNotPresent
+  service:
+    type: ClusterIP
+    port: 3000
+  wooCommerce:
+    baseUrl: https://urumi-store-wordpress.urumi.svc.cluster.local
+    requestTimeoutMs: 10000
+    tls:
+      secretName: urumi-store-wordpress-internal-tls
+  existingSecret: urumi-woocommerce-mcp-credentials
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 256Mi

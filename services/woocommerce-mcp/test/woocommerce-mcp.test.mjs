@@ -5,11 +5,12 @@ import {
   healthResponse,
   loadConfig,
   readinessResponse,
+  safeWooCommerceDiagnostic,
   WooCommerceClient,
 } from "../dist/index.js";
 
 const environment = {
-  WOOCOMMERCE_BASE_URL: "http://woocommerce.internal/",
+  WOOCOMMERCE_BASE_URL: "https://woocommerce.internal/",
   WOOCOMMERCE_CONSUMER_KEY: "ck_test_key",
   WOOCOMMERCE_CONSUMER_SECRET: "cs_test_secret",
 };
@@ -61,7 +62,6 @@ function successfulWooFetch(calls = []) {
   return async (input, init) => {
     calls.push([new URL(input), init]);
     const url = new URL(input);
-    if (url.pathname.endsWith("system_status")) return Response.json({ environment: {} });
     if (url.pathname.endsWith("products") && init?.method === "POST") return Response.json(product);
     if (url.pathname.endsWith("products")) return Response.json([product]);
     if (/orders\/\d+$/.test(url.pathname) && init?.method === "PUT") return Response.json({ ...order, status: "completed" });
@@ -74,13 +74,17 @@ function successfulWooFetch(calls = []) {
 test("loads safe configuration and rejects invalid settings without returning secrets", () => {
   assert.deepEqual(loadConfig(environment), {
     port: 3000,
-    baseUrl: "http://woocommerce.internal",
+    baseUrl: "https://woocommerce.internal",
     consumerKey: "ck_test_key",
     consumerSecret: "cs_test_secret",
     requestTimeoutMs: 10_000,
   });
   assert.throws(
-    () => loadConfig({ WOOCOMMERCE_BASE_URL: "http://woocommerce.internal" }),
+    () => loadConfig({ WOOCOMMERCE_BASE_URL: "https://woocommerce.internal" }),
+    /WooCommerce MCP configuration is invalid/,
+  );
+  assert.throws(
+    () => loadConfig({ ...environment, WOOCOMMERCE_BASE_URL: "http://woocommerce.internal" }),
     /WooCommerce MCP configuration is invalid/,
   );
   assert.throws(
@@ -98,12 +102,12 @@ test("constructs authenticated REST API requests for all five operations", async
   await client.getOrder(42);
   await client.updateOrderStatus(42, "completed");
 
-  assert.equal(calls[0][0].toString(), "http://woocommerce.internal/wp-json/wc/v3/products?page=2&per_page=25&search=shirt&status=publish");
+  assert.equal(calls[0][0].toString(), "https://woocommerce.internal/wp-json/wc/v3/products?page=2&per_page=25&search=shirt&status=publish");
   assert.equal(new Headers(calls[0][1].headers).get("authorization"), `Basic ${Buffer.from("ck_test_key:cs_test_secret").toString("base64")}`);
   assert.equal(calls[1][0].pathname, "/wp-json/wc/v3/products");
   assert.equal(calls[1][1].method, "POST");
   assert.equal(calls[1][1].body, JSON.stringify({ name: "New product", type: "simple", regular_price: "10.00" }));
-  assert.equal(calls[2][0].toString(), "http://woocommerce.internal/wp-json/wc/v3/orders?page=3&per_page=5&status=processing");
+  assert.equal(calls[2][0].toString(), "https://woocommerce.internal/wp-json/wc/v3/orders?page=3&per_page=5&status=processing");
   assert.equal(calls[3][0].pathname, "/wp-json/wc/v3/orders/42");
   assert.equal(calls[4][0].pathname, "/wp-json/wc/v3/orders/42");
   assert.equal(calls[4][1].method, "PUT");
@@ -128,6 +132,25 @@ test("normalizes malformed response, network, timeout, and HTTP failures", async
     init?.signal?.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError")));
   });
   await assert.rejects(new WooCommerceClient(shortTimeoutConfig, neverReturns).getOrder(1), /The WooCommerce request timed out/);
+});
+
+test("uses a lightweight authenticated product read for readiness and logs only safe HTTP diagnostics", async () => {
+  const calls = [];
+  const client = new WooCommerceClient(config(), successfulWooFetch(calls));
+  assert.equal((await readinessResponse(client)).status, 200);
+  assert.equal(calls[0][0].toString(), "https://woocommerce.internal/wp-json/wc/v3/products?per_page=1");
+
+  const unauthorizedClient = new WooCommerceClient(config(), async () => Response.json({
+    code: "woocommerce_rest_cannot_view",
+    message: "sensitive upstream message",
+    data: { status: 401 },
+  }, { status: 401 }));
+  let log;
+  assert.equal((await readinessResponse(unauthorizedClient, (_operation, error) => {
+    log = safeWooCommerceDiagnostic("readiness", error);
+  })).status, 503);
+  assert.equal(log, "WooCommerce readiness failed (kind=http, status=401, woocommerce_code=woocommerce_rest_cannot_view).");
+  assert.doesNotMatch(log, /sensitive|ck_test_key|cs_test_secret/);
 });
 
 test("serves health, readiness, MCP initialization, discovery, and all five redacted tools", async () => {

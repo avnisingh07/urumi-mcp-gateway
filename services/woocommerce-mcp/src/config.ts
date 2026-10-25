@@ -5,9 +5,9 @@ const configurationSchema = z.object({
   WOOCOMMERCE_BASE_URL: z.url().refine(
     (value) => {
       const url = new URL(value);
-      return url.protocol === "http:" || url.protocol === "https:";
+      return url.protocol === "https:";
     },
-    "must use http or https",
+    "must use https",
   ),
   WOOCOMMERCE_CONSUMER_KEY: z.string().trim().min(1),
   WOOCOMMERCE_CONSUMER_SECRET: z.string().trim().min(1),

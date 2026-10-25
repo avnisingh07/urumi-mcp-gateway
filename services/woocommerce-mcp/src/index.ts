@@ -2,10 +2,12 @@ import { createServer, type Server } from "node:http";
 import { createMcpHandler } from "@modelcontextprotocol/server";
 import { toNodeHandler } from "@modelcontextprotocol/node";
 import { loadConfig, type WooCommerceConfig } from "./config.js";
+import { logWooCommerceFailure } from "./errors.js";
 import { createWooCommerceMcpServer } from "./tools.js";
 import { WooCommerceClient, type FetchImplementation } from "./woocommerce-client.js";
 
 export { loadConfig, type WooCommerceConfig } from "./config.js";
+export { safeWooCommerceDiagnostic } from "./errors.js";
 export { WooCommerceClient, type FetchImplementation } from "./woocommerce-client.js";
 export { createWooCommerceMcpServer } from "./tools.js";
 
@@ -13,11 +15,15 @@ export function healthResponse(): Response {
   return Response.json({ status: "ok" });
 }
 
-export async function readinessResponse(client: WooCommerceClient): Promise<Response> {
+export async function readinessResponse(
+  client: WooCommerceClient,
+  logFailure: (operation: string, error: unknown) => void = logWooCommerceFailure,
+): Promise<Response> {
   try {
     await client.checkReady();
     return Response.json({ status: "ready" });
-  } catch {
+  } catch (error) {
+    logFailure("readiness", error);
     return Response.json({ status: "not_ready" }, { status: 503 });
   }
 }

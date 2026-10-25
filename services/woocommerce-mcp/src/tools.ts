@@ -1,6 +1,6 @@
 import { McpServer } from "@modelcontextprotocol/server";
 import { z } from "zod";
-import { sanitizedToolError } from "./errors.js";
+import { logWooCommerceFailure, sanitizedToolError } from "./errors.js";
 import { WooCommerceClient } from "./woocommerce-client.js";
 
 const idSchema = z.number().int().min(1).max(2_147_483_647);
@@ -84,6 +84,7 @@ export function createWooCommerceMcpServer(client: WooCommerceClient): McpServer
         const products = await client.listProducts({ page, per_page, search, status });
         return textResult({ products: products.map(productSummary) });
       } catch (error) {
+        logWooCommerceFailure("list_products", error);
         return textResult({ error: sanitizedToolError(error) }, true);
       }
     },
@@ -105,6 +106,7 @@ export function createWooCommerceMcpServer(client: WooCommerceClient): McpServer
         const product = await client.createProduct({ name, type: "simple", regular_price, description, status });
         return textResult({ product: productSummary(product) });
       } catch (error) {
+        logWooCommerceFailure("create_product", error);
         return textResult({ error: sanitizedToolError(error) }, true);
       }
     },
@@ -125,6 +127,7 @@ export function createWooCommerceMcpServer(client: WooCommerceClient): McpServer
         const orders = await client.listOrders({ page, per_page, status });
         return textResult({ orders: orders.map(orderSummary) });
       } catch (error) {
+        logWooCommerceFailure("list_orders", error);
         return textResult({ error: sanitizedToolError(error) }, true);
       }
     },
@@ -140,6 +143,7 @@ export function createWooCommerceMcpServer(client: WooCommerceClient): McpServer
       try {
         return textResult({ order: orderSummary(await client.getOrder(order_id)) });
       } catch (error) {
+        logWooCommerceFailure("get_order", error);
         return textResult({ error: sanitizedToolError(error) }, true);
       }
     },
@@ -155,6 +159,7 @@ export function createWooCommerceMcpServer(client: WooCommerceClient): McpServer
       try {
         return textResult({ order: orderSummary(await client.updateOrderStatus(order_id, status)) });
       } catch (error) {
+        logWooCommerceFailure("update_order_status", error);
         return textResult({ error: sanitizedToolError(error) }, true);
       }
     },

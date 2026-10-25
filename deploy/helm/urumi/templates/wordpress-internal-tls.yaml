@@ -1,0 +1,18 @@
+{{- /* A stable local CA/certificate for the internal MCP-to-WordPress TLS hop. */ -}}
+{{- $secretName := .Values.woocommerceMcp.wooCommerce.tls.secretName -}}
+{{- $existing := lookup "v1" "Secret" .Release.Namespace $secretName -}}
+{{- $ca := genCA "urumi-wordpress-internal-ca" 3650 -}}
+{{- $certificate := genSignedCert "urumi-store-wordpress.urumi.svc.cluster.local" nil (list "urumi-store-wordpress" "urumi-store-wordpress.urumi" "urumi-store-wordpress.urumi.svc" "urumi-store-wordpress.urumi.svc.cluster.local") 3650 $ca -}}
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ $secretName }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: wordpress-internal-tls
+    app.kubernetes.io/instance: {{ .Release.Name }}
+type: kubernetes.io/tls
+data:
+  tls.crt: {{ if $existing }}{{ index $existing.data "tls.crt" }}{{ else }}{{ $certificate.Cert | b64enc }}{{ end }}
+  tls.key: {{ if $existing }}{{ index $existing.data "tls.key" }}{{ else }}{{ $certificate.Key | b64enc }}{{ end }}
+  ca.crt: {{ if $existing }}{{ index $existing.data "ca.crt" }}{{ else }}{{ $ca.Cert | b64enc }}{{ end }}

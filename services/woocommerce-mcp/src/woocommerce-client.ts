@@ -30,7 +30,7 @@ export class WooCommerceClient {
   }
 
   public async checkReady(): Promise<void> {
-    await this.request("system_status");
+    await this.listProducts({ per_page: 1 });
   }
 
   private async request(
@@ -62,7 +62,7 @@ export class WooCommerceClient {
         signal: controller.signal,
       });
 
-      if (!response.ok) throw this.httpError(response.status);
+      if (!response.ok) throw this.httpError(response.status, await this.wooCommerceErrorCode(response));
 
       try {
         return (await response.json()) as unknown;
@@ -87,16 +87,35 @@ export class WooCommerceClient {
     return value;
   }
 
-  private httpError(status: number): WooCommerceClientError {
+  private async wooCommerceErrorCode(response: Response): Promise<string | undefined> {
+    try {
+      const body: unknown = await response.json();
+      if (
+        typeof body === "object" &&
+        body !== null &&
+        "code" in body &&
+        typeof body.code === "string" &&
+        /^[a-z0-9_-]{1,100}$/.test(body.code)
+      ) {
+        return body.code;
+      }
+    } catch {
+      // Upstream response bodies are intentionally not retained or logged.
+    }
+
+    return undefined;
+  }
+
+  private httpError(status: number, wooCommerceCode?: string): WooCommerceClientError {
     if (status === 401 || status === 403) {
-      return new WooCommerceClientError("http", "WooCommerce rejected the service credentials.", status);
+      return new WooCommerceClientError("http", "WooCommerce rejected the service credentials.", status, wooCommerceCode);
     }
     if (status === 404) {
-      return new WooCommerceClientError("http", "The requested WooCommerce resource was not found.", status);
+      return new WooCommerceClientError("http", "The requested WooCommerce resource was not found.", status, wooCommerceCode);
     }
     if (status === 429) {
-      return new WooCommerceClientError("http", "WooCommerce is temporarily rate limiting requests.", status);
+      return new WooCommerceClientError("http", "WooCommerce is temporarily rate limiting requests.", status, wooCommerceCode);
     }
-    return new WooCommerceClientError("http", "WooCommerce could not complete this request.", status);
+    return new WooCommerceClientError("http", "WooCommerce could not complete this request.", status, wooCommerceCode);
   }
 }
