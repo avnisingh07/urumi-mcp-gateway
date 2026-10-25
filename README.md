@@ -15,6 +15,16 @@ Inventory and Support also provide `GET /healthz` and `GET /readyz`. Their
 initial tools are `inventory_status` and `support_status`, respectively; no
 credentials or external service are required to run them.
 
+Inventory additionally exposes `get_stock({ product_id })`, where `product_id`
+is a positive integer. Known fixture IDs `101`, `102`, and `202` return a
+deterministic `{ product_id, available, reserved, status }` record; other
+positive IDs return the predictable MCP tool error
+`{ "error": "not_found", "product_id": ... }`. Support additionally exposes
+`get_order_support_summary({ order_id })`. Fixture IDs `202` and `203` return
+`{ order_id, open_tickets, priority, next_action }`; other positive IDs return
+the equivalent `not_found` error. These fixtures permit a cross-upstream demo:
+use a WooCommerce product or order ID as the Inventory or Support input.
+
 From the repository root, build once and start them in separate terminals:
 
 ```sh
@@ -27,8 +37,9 @@ npm run build --workspace @urumi/support-mcp
 npm run start --workspace @urumi/support-mcp
 ```
 
-To add the local upstreams explicitly (this does not change existing
-registrations automatically), use an existing admin API key:
+To add local loopback upstreams explicitly, start a development-only gateway
+with `UPSTREAM_DEVELOPMENT_ALLOW_PRIVATE=true`. This does not change existing
+registrations automatically; then use an existing admin API key:
 
 ```sh
 curl -X POST http://127.0.0.1:3100/api/upstreams \
@@ -165,3 +176,25 @@ The gateway persists users, scrypt-hashed API keys, encrypted upstream credentia
 For local development, create an empty PostgreSQL database, export `DATABASE_URL` and a freshly generated `UPSTREAM_CREDENTIAL_ENCRYPTION_KEY` (the `.env.example` is a reference only), then run `npm run build`. Create the first administrator exactly once with `npm run bootstrap-admin --workspace @urumi/gateway -- admin`; save its one-time stdout value in a password manager, then start with `npm run start --workspace @urumi/gateway`. Keep the encryption key in a secret manager or Kubernetes Secret; it is required to read stored upstream credentials.
 
 Management routes use `Authorization: Bearer <API key>`. Only admins can use `/api/users`, `/api/keys`, `/api/upstreams`, and `/api/audit`; members may call `/mcp` and view `/api/status`. A raw key is returned only by `POST /api/users/:id/keys`; the database stores only its salted hash.
+
+## Upstream URL policy and health
+
+Upstream registration accepts only HTTP(S) URLs without embedded credentials.
+The gateway resolves hostnames before create/update and rejects loopback, private,
+link-local, multicast, unspecified, and cloud-metadata destinations by default.
+Set `UPSTREAM_ALLOWED_HOSTS` to narrowly allow named internal services that resolve
+to private addresses, for example `*.svc.cluster.local` in Kubernetes. For local
+development only, `UPSTREAM_DEVELOPMENT_ALLOW_PRIVATE=true` permits private
+addresses; do not use it in production. Metadata and link-local addresses remain
+blocked.
+
+Admins can poll `GET /api/upstreams/health`. Results include only the upstream ID,
+name, enabled state, reachable/disabled state, tool count, timestamp, and a
+sanitized error category. Checks use normal per-upstream timeouts, run independently,
+and are coalesced/cached for five seconds to avoid polling storms.
+
+Hostname resolution is repeated immediately before production upstream requests,
+but the current Node `fetch` transport does not pin the validated address for the
+TCP connection. A hostile DNS server could therefore rebind between validation and
+connection. Deploy production gateways with trusted DNS and egress policy; address
+pinning/custom connection dispatch is a remaining hardening task.

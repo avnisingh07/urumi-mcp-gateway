@@ -1,4 +1,5 @@
 import type { McpToolDefinition, UpstreamConfiguration } from "@urumi/shared";
+import type { UpstreamUrlPolicy } from "./upstream-url-policy.js";
 
 export type FetchImplementation = typeof fetch;
 
@@ -10,7 +11,7 @@ export class UpstreamError extends Error {
 
 /** Minimal Streamable HTTP MCP client for the two gateway operations. */
 export class StreamableHttpUpstreamClient {
-  constructor(private readonly fetchImplementation: FetchImplementation = fetch) {}
+  constructor(private readonly fetchImplementation: FetchImplementation = fetch, private readonly urlPolicy?: UpstreamUrlPolicy) {}
 
   async listTools(upstream: UpstreamConfiguration): Promise<McpToolDefinition[]> {
     const result = await this.request(upstream, "tools/list", {});
@@ -27,6 +28,7 @@ export class StreamableHttpUpstreamClient {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), upstream.timeoutMs);
     try {
+      if (this.urlPolicy) await this.urlPolicy.validate(upstream.url);
       const headers: Record<string, string> = {
         "content-type": "application/json",
         accept: "application/json, text/event-stream",

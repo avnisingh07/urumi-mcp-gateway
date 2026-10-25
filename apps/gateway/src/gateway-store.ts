@@ -4,6 +4,7 @@ import { Pool, type PoolConfig } from "pg";
 import type { UpstreamConfiguration } from "@urumi/shared";
 import { publicConfiguration, upstreamNamespace, type UpstreamInput, type UpstreamRepository } from "./upstream-repository.js";
 import { CredentialCipher, createApiKey, hashApiKey, type Role, verifyApiKey } from "./security.js";
+import { UpstreamUrlPolicy } from "./upstream-url-policy.js";
 
 export type GatewayUser = { id: string; username: string; role: Role; createdAt: string };
 export type AuthenticatedUser = Pick<GatewayUser, "id" | "username" | "role">;
@@ -11,10 +12,10 @@ export type IssuedApiKey = { id: string; key: string; createdAt: string };
 export type AuditEvent = { id: string; userId: string | null; upstreamId: string | null; upstreamName: string | null; toolName: string | null; occurredAt: string; durationMs: number; outcome: "success" | "failure" | "denied"; errorCode: string | null };
 
 export class PostgresGatewayStore implements UpstreamRepository {
-  constructor(private readonly pool: Pool, private readonly cipher: CredentialCipher) {}
+  constructor(private readonly pool: Pool, private readonly cipher: CredentialCipher, readonly urlPolicy = new UpstreamUrlPolicy()) {}
 
-  static fromConfig(config: { databaseUrl: string; credentialEncryptionKey: string }): PostgresGatewayStore {
-    return new PostgresGatewayStore(new Pool({ connectionString: config.databaseUrl }), new CredentialCipher(config.credentialEncryptionKey));
+  static fromConfig(config: { databaseUrl: string; credentialEncryptionKey: string; urlPolicy?: UpstreamUrlPolicy }): PostgresGatewayStore {
+    return new PostgresGatewayStore(new Pool({ connectionString: config.databaseUrl }), new CredentialCipher(config.credentialEncryptionKey), config.urlPolicy);
   }
   async close(): Promise<void> { await this.pool.end(); }
   async migrate(migrationPath = new URL("../migrations/001_gateway_state.sql", import.meta.url)): Promise<void> {
@@ -24,13 +25,13 @@ export class PostgresGatewayStore implements UpstreamRepository {
   async get(id: string): Promise<UpstreamConfiguration | undefined> { const result = await this.pool.query("SELECT * FROM gateway_upstreams WHERE id=$1", [id]); return result.rows[0] && this.toUpstream(result.rows[0]); }
   async create(input: UpstreamInput): Promise<UpstreamConfiguration> {
     const value = { ...input, id: input.id ?? randomUUID() } as UpstreamConfiguration;
-    validateUpstream(value); await this.assertNamespaceAvailable(value.name, value.id);
+    await validateUpstream(value, this.urlPolicy); await this.assertNamespaceAvailable(value.name, value.id);
     await this.pool.query("INSERT INTO gateway_upstreams (id,name,url,enabled,credential_ciphertext,timeout_ms) VALUES ($1,$2,$3,$4,$5,$6)", [value.id, value.name, value.url, value.enabled, value.credential ? this.cipher.encrypt(value.credential) : null, value.timeoutMs]);
     return value;
   }
   async update(id: string, patch: Partial<Omit<UpstreamConfiguration, "id">>): Promise<UpstreamConfiguration | undefined> {
     const current = await this.get(id); if (!current) return undefined;
-    const value = { ...current, ...patch, id }; validateUpstream(value); await this.assertNamespaceAvailable(value.name, id);
+    const value = { ...current, ...patch, id }; await validateUpstream(value, this.urlPolicy); await this.assertNamespaceAvailable(value.name, id);
     await this.pool.query("UPDATE gateway_upstreams SET name=$2,url=$3,enabled=$4,credential_ciphertext=$5,timeout_ms=$6,updated_at=now() WHERE id=$1", [id, value.name, value.url, value.enabled, value.credential ? this.cipher.encrypt(value.credential) : null, value.timeoutMs]);
     return value;
   }
@@ -66,7 +67,7 @@ export class PostgresGatewayStore implements UpstreamRepository {
   }
 }
 
-function validateUpstream(value: UpstreamConfiguration): void { upstreamNamespace(value.name); const url = new URL(value.url); if (!["http:", "https:"].includes(url.protocol) || url.username || url.password || !Number.isInteger(value.timeoutMs) || value.timeoutMs < 100 || value.timeoutMs > 30_000) throw new Error("Upstream configuration is invalid."); }
+async function validateUpstream(value: UpstreamConfiguration, urlPolicy: UpstreamUrlPolicy): Promise<void> { upstreamNamespace(value.name); await urlPolicy.validate(value.url); if (!Number.isInteger(value.timeoutMs) || value.timeoutMs < 100 || value.timeoutMs > 30_000) throw new Error("Upstream configuration is invalid."); }
 function toUser(row: Record<string, unknown>): GatewayUser { return { id: String(row.id), username: String(row.username), role: row.role as Role, createdAt: new Date(String(row.created_at)).toISOString() }; }
 function isRole(role: string): role is Role { return role === "admin" || role === "member"; }
 export { publicConfiguration };

@@ -1,4 +1,5 @@
 import type { PublicUpstreamConfiguration, UpstreamConfiguration } from "@urumi/shared";
+import { UpstreamUrlPolicy } from "./upstream-url-policy.js";
 
 export type UpstreamInput = Omit<UpstreamConfiguration, "id"> & { id?: string };
 
@@ -17,6 +18,7 @@ export interface UpstreamRepository {
 export class InMemoryUpstreamRepository implements UpstreamRepository {
   private readonly upstreams = new Map<string, UpstreamConfiguration>();
   private nextId = 1;
+  constructor(private readonly urlPolicy = new UpstreamUrlPolicy()) {}
 
   async list(): Promise<UpstreamConfiguration[]> {
     return [...this.upstreams.values()].map((value) => ({ ...value }));
@@ -30,7 +32,7 @@ export class InMemoryUpstreamRepository implements UpstreamRepository {
   async create(input: UpstreamInput): Promise<UpstreamConfiguration> {
     const id = input.id ?? `upstream-${this.nextId++}`;
     if (this.upstreams.has(id)) throw new Error("An upstream with this id already exists.");
-    const value = validateConfiguration({ ...input, id });
+    const value = await validateConfiguration({ ...input, id }, this.urlPolicy);
     this.assertNamespaceAvailable(value.name, id);
     this.upstreams.set(id, value);
     return { ...value };
@@ -39,7 +41,7 @@ export class InMemoryUpstreamRepository implements UpstreamRepository {
   async update(id: string, input: Partial<Omit<UpstreamConfiguration, "id">>): Promise<UpstreamConfiguration | undefined> {
     const current = this.upstreams.get(id);
     if (!current) return undefined;
-    const value = validateConfiguration({ ...current, ...input, id });
+    const value = await validateConfiguration({ ...current, ...input, id }, this.urlPolicy);
     this.assertNamespaceAvailable(value.name, id);
     this.upstreams.set(id, value);
     return { ...value };
@@ -70,14 +72,12 @@ export function publicConfiguration(value: UpstreamConfiguration): PublicUpstrea
   return publicValue;
 }
 
-function validateConfiguration(value: UpstreamConfiguration): UpstreamConfiguration {
+export async function validateConfiguration(value: UpstreamConfiguration, urlPolicy: UpstreamUrlPolicy): Promise<UpstreamConfiguration> {
   if (!value.id.trim()) throw new Error("Upstream id is required.");
   upstreamNamespace(value.name);
-  let url: URL;
-  try { url = new URL(value.url); } catch { throw new Error("Upstream URL must be valid."); }
-  if (url.protocol !== "http:" && url.protocol !== "https:" || url.username || url.password) throw new Error("Upstream URL must use HTTP or HTTPS without embedded credentials.");
+  const url = await urlPolicy.validate(value.url);
   if (!Number.isInteger(value.timeoutMs) || value.timeoutMs < 100 || value.timeoutMs > 30_000) {
     throw new Error("Upstream timeout must be between 100 and 30000 ms.");
   }
-  return { ...value, url: url.toString() };
+  return { ...value, url };
 }

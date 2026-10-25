@@ -5,6 +5,9 @@ import { GatewayCore, GatewayToolError } from "./gateway-core.js";
 import { InMemoryUpstreamRepository, type UpstreamRepository } from "./upstream-repository.js";
 import { PostgresGatewayStore, type AuthenticatedUser } from "./gateway-store.js";
 import { loadGatewayConfig } from "./config.js";
+import { UpstreamHealthReporter } from "./upstream-health.js";
+import { StreamableHttpUpstreamClient } from "./upstream-client.js";
+import { UpstreamUrlPolicyError } from "./upstream-url-policy.js";
 
 export { GatewayCore, GatewayToolError, validateJsonSchema } from "./gateway-core.js";
 export { InMemoryUpstreamRepository, publicConfiguration, upstreamNamespace, type UpstreamRepository, type UpstreamInput } from "./upstream-repository.js";
@@ -12,6 +15,8 @@ export { StreamableHttpUpstreamClient, UpstreamError, type FetchImplementation }
 export { PostgresGatewayStore, type AuthenticatedUser, type GatewayUser, type AuditEvent, type IssuedApiKey } from "./gateway-store.js";
 export { CredentialCipher, createApiKey, hashApiKey, verifyApiKey, type Role } from "./security.js";
 export { loadGatewayConfig, type GatewayConfig } from "./config.js";
+export { UpstreamHealthReporter, type UpstreamHealth } from "./upstream-health.js";
+export { UpstreamUrlPolicy, UpstreamUrlPolicyError, policyFromEnvironment, type DnsResolver } from "./upstream-url-policy.js";
 
 export type GatewayAuthenticator = (request: Request) => Promise<AuthenticatedUser | boolean | undefined>;
 
@@ -67,17 +72,19 @@ export function createPersistentApplication(store: PostgresGatewayStore): Server
     const value = request.headers.get("authorization");
     return value?.startsWith("Bearer ") ? store.authenticateApiKey(value.slice(7)) : undefined;
   };
-  const core = new GatewayCore(store, undefined, store);
+  const client = new StreamableHttpUpstreamClient(fetch, store.urlPolicy);
+  const core = new GatewayCore(store, client, store);
+  const health = new UpstreamHealthReporter(store, client);
   const mcpHandler = createGatewayMcpHandler(core, authenticate);
   const handleMcp = toNodeHandler(mcpHandler, { maxRequestBodySize: 1_048_576 });
   return createServer((request, response) => {
     const url = new URL(request.url ?? "/", "http://localhost");
     if (url.pathname === "/mcp") { void handleMcp(request, response); return; }
-    void handleApi(request, response, store, url, authenticate);
+    void handleApi(request, response, store, url, authenticate, health);
   });
 }
 
-async function handleApi(request: import("node:http").IncomingMessage, response: import("node:http").ServerResponse, store: PostgresGatewayStore, url: URL, authenticate: GatewayAuthenticator): Promise<void> {
+export async function handleApi(request: import("node:http").IncomingMessage, response: import("node:http").ServerResponse, store: PostgresGatewayStore, url: URL, authenticate: GatewayAuthenticator, health: UpstreamHealthReporter): Promise<void> {
   if (request.method === "GET" && url.pathname === "/healthz") return json(response, 200, { status: "ok" });
   const webRequest = new Request(`http://gateway.local${url.pathname}${url.search}`, { method: request.method, headers: request.headers as HeadersInit });
   const user = await authenticate(webRequest);
@@ -93,13 +100,14 @@ async function handleApi(request: import("node:http").IncomingMessage, response:
     const revokeMatch = url.pathname.match(/^\/api\/keys\/([\w-]+)$/);
     if (request.method === "DELETE" && revokeMatch) return json(response, (await store.revokeApiKey(revokeMatch[1])) ? 204 : 404);
     if (request.method === "GET" && url.pathname === "/api/upstreams") return json(response, 200, { upstreams: (await store.list()).map((value) => ({ id: value.id, name: value.name, url: value.url, enabled: value.enabled, timeoutMs: value.timeoutMs })) });
+    if (request.method === "GET" && url.pathname === "/api/upstreams/health") return json(response, 200, { upstreams: await health.report() });
     if (request.method === "POST" && url.pathname === "/api/upstreams") return json(response, 201, { upstream: publicUpstream(await store.create(upstreamBody(body))) });
     const upstreamMatch = url.pathname.match(/^\/api\/upstreams\/([\w-]+)$/);
     if (upstreamMatch && request.method === "PATCH") { const value = await store.update(upstreamMatch[1], upstreamPatch(body)); return value ? json(response, 200, { upstream: publicUpstream(value) }) : json(response, 404, { error: "not_found" }); }
     if (upstreamMatch && request.method === "DELETE") return json(response, (await store.remove(upstreamMatch[1])) ? 204 : 404);
     if (request.method === "GET" && url.pathname === "/api/audit") return json(response, 200, { events: await store.listAudit(Number(url.searchParams.get("limit") ?? "100")) });
     return json(response, 404, { error: "not_found" });
-  } catch { return json(response, 400, { error: "invalid_request" }); }
+  } catch (error) { return json(response, 400, { error: error instanceof UpstreamUrlPolicyError ? "upstream_url_not_permitted" : "invalid_request" }); }
 }
 
 function json(response: import("node:http").ServerResponse, status: number, value?: unknown): void { response.writeHead(status, value === undefined ? {} : { "Content-Type": "application/json" }); response.end(value === undefined ? undefined : JSON.stringify(value)); }

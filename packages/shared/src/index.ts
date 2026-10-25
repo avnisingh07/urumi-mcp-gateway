@@ -37,7 +37,7 @@ export type StatusMcpService = {
 };
 
 /** Shared Streamable HTTP transport and probes for stateless internal MCP services. */
-export function createStatusMcpService(options: { service: string; serverName: string; toolName: string; defaultPort: number }): StatusMcpService {
+export function createStatusMcpService(options: { service: string; serverName: string; toolName: string; defaultPort: number; registerTools?: (server: McpServer) => void }): StatusMcpService {
   const portSchema = z.coerce.number().int().min(1).max(65_535).default(options.defaultPort);
   const loadConfig = (environment: NodeJS.ProcessEnv = process.env) => {
     const result = portSchema.safeParse(environment.PORT);
@@ -47,6 +47,7 @@ export function createStatusMcpService(options: { service: string; serverName: s
   const createMcpHttpHandler = () => createMcpHandler(() => {
     const server = new McpServer({ name: options.serverName, version: "0.1.0" });
     server.registerTool(options.toolName, { description: `Return the ${options.service} MCP service status.`, inputSchema: z.object({}) }, async () => ({ content: [{ type: "text", text: JSON.stringify({ status: "ok", service: options.service.toLowerCase() }) }] }));
+    options.registerTools?.(server);
     return server;
   }, { maxRequestBodySize: 1_048_576 });
   const createApplication = () => {
