@@ -37,6 +37,7 @@ export class StreamableHttpUpstreamClient {
       const response = await this.fetchImplementation(upstream.url, {
         method: "POST",
         headers,
+        redirect: "error",
         signal: controller.signal,
         body: JSON.stringify({ jsonrpc: "2.0", id: crypto.randomUUID(), method, params }),
       });

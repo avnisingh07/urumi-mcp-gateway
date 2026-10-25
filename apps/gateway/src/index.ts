@@ -67,14 +67,14 @@ export function createApplication(repository: UpstreamRepository = new InMemoryU
 }
 
 /** Full M5 HTTP surface. All management routes are server-side admin-only. */
-export function createPersistentApplication(store: PostgresGatewayStore): Server {
+export function createPersistentApplication(store: PostgresGatewayStore, options: { client?: StreamableHttpUpstreamClient; healthTtlMs?: number } = {}): Server {
   const authenticate = async (request: Request) => {
     const value = request.headers.get("authorization");
     return value?.startsWith("Bearer ") ? store.authenticateApiKey(value.slice(7)) : undefined;
   };
-  const client = new StreamableHttpUpstreamClient(fetch, store.urlPolicy);
+  const client = options.client ?? new StreamableHttpUpstreamClient(fetch, store.urlPolicy);
   const core = new GatewayCore(store, client, store);
-  const health = new UpstreamHealthReporter(store, client);
+  const health = new UpstreamHealthReporter(store, client, options.healthTtlMs);
   const mcpHandler = createGatewayMcpHandler(core, authenticate);
   const handleMcp = toNodeHandler(mcpHandler, { maxRequestBodySize: 1_048_576 });
   return createServer((request, response) => {

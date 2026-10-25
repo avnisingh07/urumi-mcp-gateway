@@ -98,6 +98,25 @@ test("reports bounded, sanitized health for reachable, disabled, and failed upst
   assert.equal(calls, 2);
 });
 
+test("rejects upstream redirects rather than following an unvalidated destination", async () => {
+  const client = new StreamableHttpUpstreamClient(async (_input, init) => {
+    assert.equal(init.redirect, "error");
+    throw new TypeError("redirect disallowed");
+  });
+  await assert.rejects(client.listTools(upstream("Redirect", "https://public.example/mcp")), /unavailable/);
+});
+
+test("uses the same URL-policy-enforcing client for health checks", async () => {
+  const repo = new InMemoryUpstreamRepository(testUrlPolicy());
+  await repo.create(upstream("Policy blocked", "https://public.example/mcp"));
+  let contacted = false;
+  const client = new StreamableHttpUpstreamClient(async () => { contacted = true; return mcpResponse({ tools: [] }); }, new UpstreamUrlPolicy({ resolve: async () => ["127.0.0.1"] }));
+  const health = await new UpstreamHealthReporter(repo, client, 0).report();
+  assert.equal(contacted, false);
+  assert.equal(health[0].state, "unreachable");
+  assert.equal(health[0].error, "unavailable");
+});
+
 test("requires an authenticated admin for the upstream health API", async () => {
   const invoke = async (role) => {
     const result = { status: undefined, body: "" };
