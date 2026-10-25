@@ -1,6 +1,6 @@
 apiVersion: v2
 name: urumi
-description: Local Helm deployment for the Urumi WooCommerce store
+description: Local Helm deployment for the Urumi WooCommerce store and internal MCP upstreams
 type: application
 version: 0.1.0
 appVersion: "1.0"

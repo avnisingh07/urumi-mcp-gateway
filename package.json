@@ -9,8 +9,8 @@
     "packages/*"
   ],
   "scripts": {
-    "build": "npm run build --workspaces --if-present",
-    "typecheck": "npm run typecheck --workspaces --if-present"
+    "build": "npm run build --workspace @urumi/shared && npm run build --workspaces --if-present",
+    "typecheck": "npm run typecheck --workspace @urumi/shared && npm run typecheck --workspaces --if-present"
   },
   "devDependencies": {
     "typescript": "5.8.3"
