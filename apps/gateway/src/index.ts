@@ -2,7 +2,7 @@ import { createServer, type Server } from "node:http";
 import { createMcpHandler, fromJsonSchema, McpServer } from "@modelcontextprotocol/server";
 import { toNodeHandler } from "@modelcontextprotocol/node";
 import { GatewayCore, GatewayToolError } from "./gateway-core.js";
-import { InMemoryUpstreamRepository, type UpstreamRepository } from "./upstream-repository.js";
+import { InMemoryUpstreamRepository, publicConfiguration, type UpstreamRepository } from "./upstream-repository.js";
 import { PostgresGatewayStore, type AuthenticatedUser } from "./gateway-store.js";
 import { loadGatewayConfig } from "./config.js";
 import { UpstreamHealthReporter } from "./upstream-health.js";
@@ -117,7 +117,7 @@ function role(value: unknown): "admin" | "member" { if (value !== "admin" && val
 function upstreamBody(body: Record<string, unknown>) { const enabled = "enabled" in body ? body.enabled : true; const credential = "credential" in body ? body.credential : undefined; if (typeof enabled !== "boolean" || (credential !== undefined && typeof credential !== "string")) throw new Error("invalid"); return { name: string(body.name), url: string(body.url), enabled, credential, timeoutMs: number(body.timeoutMs ?? 10_000) }; }
 function upstreamPatch(body: Record<string, unknown>) { const output: Record<string, unknown> = {}; if ("name" in body) output.name = string(body.name); if ("url" in body) output.url = string(body.url); if ("enabled" in body) { if (typeof body.enabled !== "boolean") throw new Error("invalid"); output.enabled = body.enabled; } if ("credential" in body) output.credential = string(body.credential); if ("timeoutMs" in body) output.timeoutMs = number(body.timeoutMs); return output; }
 function number(value: unknown): number { if (typeof value !== "number" || !Number.isInteger(value)) throw new Error("invalid"); return value; }
-function publicUpstream(value: { id: string; name: string; url: string; enabled: boolean; timeoutMs: number }) { return value; }
+function publicUpstream(value: Parameters<typeof publicConfiguration>[0]) { return publicConfiguration(value); }
 export function isManagementAllowed(user: AuthenticatedUser): boolean { return user.role === "admin"; }
 
 async function start(): Promise<void> {

@@ -5,13 +5,10 @@ import { createServer } from "node:http";
 import test from "node:test";
 import { Pool } from "pg";
 import { createPersistentApplication, PostgresGatewayStore, StreamableHttpUpstreamClient, UpstreamUrlPolicy } from "../dist/index.js";
+import { postgresTestSkip } from "./test-database.mjs";
 
 const databaseUrl = process.env.GATEWAY_TEST_DATABASE_URL;
-const integrationSkip = !databaseUrl
-  ? "Set GATEWAY_TEST_DATABASE_URL to a dedicated database whose name contains _test."
-  : !/(?:^|[_-])test(?:[_-]|$)/.test(decodeURIComponent(new URL(databaseUrl).pathname.slice(1)))
-    ? "Refusing to run: GATEWAY_TEST_DATABASE_URL must name a dedicated database containing _test."
-    : false;
+const integrationSkip = postgresTestSkip(databaseUrl);
 
 function mcpResponse(result) { return Response.json({ jsonrpc: "2.0", id: "test", result }); }
 function parseMcp(text, contentType) {
@@ -36,6 +33,7 @@ test("PostgreSQL-backed authenticated HTTP API persists roles, keys, upstreams, 
     const client = new StreamableHttpUpstreamClient(async (_input, init) => {
       if (upstreamFailure) throw new Error("credential=never-return-this");
       const request = JSON.parse(init.body);
+      if (request.method === "tools/call" && request.params.arguments.id === 99) return new Response("sensitive upstream failure", { status: 500 });
       return request.method === "tools/list"
         ? mcpResponse({ tools: [{ name: "lookup", inputSchema: { type: "object", properties: { id: { type: "integer", minimum: 1 } }, required: ["id"], additionalProperties: false } }] })
         : mcpResponse({ content: [{ type: "text", text: JSON.stringify({ id: request.params.arguments.id }) }] });
@@ -96,8 +94,8 @@ test("PostgreSQL-backed authenticated HTTP API persists roles, keys, upstreams, 
     const toolName = tools.body.result.tools[0].name;
     const successfulCall = await request("/mcp", { method: "POST", key: memberKey.key, mcp: true, body: { jsonrpc: "2.0", id: 2, method: "tools/call", params: { name: toolName, arguments: { id: 7 } } } });
     assert.equal(successfulCall.body.result.content[0].text, '{"id":7}');
-    const invalid = await request("/mcp", { method: "POST", key: memberKey.key, mcp: true, body: { jsonrpc: "2.0", id: 3, method: "tools/call", params: { name: toolName, arguments: { id: 0 } } } });
-    assert.equal(invalid.body.result.isError, true);
+    const failedCall = await request("/mcp", { method: "POST", key: memberKey.key, mcp: true, body: { jsonrpc: "2.0", id: 3, method: "tools/call", params: { name: toolName, arguments: { id: 99 } } } });
+    assert.equal(failedCall.body.result.isError, true);
     const audit = await request("/api/audit", { key: adminKey.key });
     assert.deepEqual(audit.body.events.slice(0, 2).map((event) => [event.userId, event.upstreamId, event.toolName, event.outcome]), [[member.id, upstream.id, toolName, "failure"], [member.id, upstream.id, toolName, "success"]]);
 

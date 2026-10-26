@@ -17,6 +17,7 @@ import {
   handleApi,
   policyFromEnvironment,
 } from "../dist/index.js";
+import { postgresTestSkip } from "./test-database.mjs";
 
 const testUrlPolicy = () => new UpstreamUrlPolicy({ resolve: async () => ["203.0.113.10"] });
 const repository = () => new InMemoryUpstreamRepository(testUrlPolicy());
@@ -315,18 +316,27 @@ test("uses one-way API-key hashes and authenticated audit records without argume
   assert.equal(Object.prototype.hasOwnProperty.call(events[0], "arguments"), false);
 });
 
-test("PostgreSQL state persists across store reinitialization", { skip: !process.env.GATEWAY_TEST_DATABASE_URL }, async () => {
-  const config = { databaseUrl: process.env.GATEWAY_TEST_DATABASE_URL, credentialEncryptionKey: Buffer.alloc(32, 9).toString("base64") };
+test("PostgreSQL state persists across store reinitialization", { skip: postgresTestSkip() }, async () => {
+  const urlPolicy = new UpstreamUrlPolicy({ resolve: async () => ["203.0.113.10"] });
+  const config = { databaseUrl: process.env.GATEWAY_TEST_DATABASE_URL, credentialEncryptionKey: Buffer.alloc(32, 9).toString("base64"), urlPolicy };
   const first = PostgresGatewayStore.fromConfig(config);
   await first.migrate();
-  const created = await first.create(upstream(`persist-${Date.now()}`, "http://persist.test/mcp", { credential: "stored-secret" }));
-  await first.close();
-  const second = PostgresGatewayStore.fromConfig(config);
-  const restored = await second.get(created.id);
-  assert.deepEqual({ ...restored, credential: undefined }, { ...created, credential: undefined });
-  assert.equal(restored.credential, "stored-secret");
-  await second.remove(created.id);
-  await second.close();
+  let created;
+  let second;
+  let firstClosed = false;
+  try {
+    created = await first.create(upstream(`persist-${Date.now()}`, "https://persist.example.test/mcp", { credential: "stored-secret" }));
+    await first.close();
+    firstClosed = true;
+    second = PostgresGatewayStore.fromConfig(config);
+    const restored = await second.get(created.id);
+    assert.deepEqual({ ...restored, credential: undefined }, { ...created, credential: undefined });
+    assert.equal(restored.credential, "stored-secret");
+  } finally {
+    if (second && created) await second.remove(created.id);
+    await second?.close();
+    if (!firstClosed) await first.close();
+  }
 });
 
 test("management authorization rejects members and a revoked key is immediately rejected", async () => {
