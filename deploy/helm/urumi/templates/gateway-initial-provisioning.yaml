@@ -1,0 +1,71 @@
+{{- if .Values.gateway.initialProvisioning.enabled }}
+{{- $secret := required "gateway.initialProvisioning.existingSecret is required when initial provisioning is enabled" .Values.gateway.initialProvisioning.existingSecret }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ .Release.Name }}-gateway-initial-provisioning
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: gateway-initial-provisioning
+    app.kubernetes.io/instance: {{ .Release.Name }}
+spec:
+  backoffLimit: 3
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: gateway-initial-provisioning
+        app.kubernetes.io/instance: {{ .Release.Name }}
+    spec:
+      restartPolicy: OnFailure
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        seccompProfile: { type: RuntimeDefault }
+      initContainers:
+        - name: wait-for-postgres
+          image: "{{ .Values.postgres.image.repository }}:{{ .Values.postgres.image.tag }}"
+          command: ["sh", "-c", "until pg_isready -h {{ .Release.Name }}-postgres -p {{ .Values.postgres.service.port }} -U $POSTGRES_USER -d $POSTGRES_DB; do sleep 2; done"]
+          env:
+            - name: POSTGRES_DB
+              value: {{ .Values.postgres.database | quote }}
+            - name: POSTGRES_USER
+              value: {{ .Values.postgres.username | quote }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities: { drop: ["ALL"] }
+      containers:
+        - name: provision
+          image: "{{ .Values.gateway.image.repository }}:{{ .Values.gateway.image.tag }}"
+          imagePullPolicy: {{ .Values.gateway.image.pullPolicy }}
+          command: ["node", "apps/gateway/dist/provision-initial-state.js"]
+          env:
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef: { name: {{ .Values.gateway.existingSecret }}, key: database-url }
+            - name: UPSTREAM_CREDENTIAL_ENCRYPTION_KEY
+              valueFrom:
+                secretKeyRef: { name: {{ .Values.gateway.existingSecret }}, key: upstream-credential-encryption-key }
+            - name: UPSTREAM_ALLOWED_HOSTS
+              value: {{ .Values.gateway.upstreamPolicy.allowedHosts | quote }}
+            - name: UPSTREAM_DEVELOPMENT_ALLOW_PRIVATE
+              value: {{ .Values.gateway.upstreamPolicy.developmentAllowPrivate | quote }}
+            - name: GATEWAY_INITIAL_ADMIN_USERNAME
+              valueFrom:
+                secretKeyRef: { name: {{ $secret }}, key: GATEWAY_INITIAL_ADMIN_USERNAME }
+            - name: GATEWAY_INITIAL_ADMIN_API_KEY
+              valueFrom:
+                secretKeyRef: { name: {{ $secret }}, key: GATEWAY_INITIAL_ADMIN_API_KEY }
+            - name: GATEWAY_INITIAL_WOOCOMMERCE_URL
+              value: {{ printf "http://%s-woocommerce-mcp.%s.svc.cluster.local:%v/mcp" .Release.Name .Release.Namespace .Values.woocommerceMcp.service.port | quote }}
+            - name: GATEWAY_INITIAL_INVENTORY_URL
+              value: {{ printf "http://%s-inventory-mcp.%s.svc.cluster.local:%v/mcp" .Release.Name .Release.Namespace .Values.internalMcpUpstreams.inventory.service.port | quote }}
+            - name: GATEWAY_INITIAL_SUPPORT_URL
+              value: {{ printf "http://%s-support-mcp.%s.svc.cluster.local:%v/mcp" .Release.Name .Release.Namespace .Values.internalMcpUpstreams.support.service.port | quote }}
+          resources:
+            {{- toYaml .Values.gateway.initialProvisioning.resources | nindent 12 }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities: { drop: ["ALL"] }
+{{- end }}

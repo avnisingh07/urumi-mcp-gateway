@@ -2,6 +2,17 @@
 
 All authenticated endpoints use `Authorization: Bearer <individual gateway API key>`. Invalid or revoked keys return `401 {"error":"unauthorized"}`. Keys are issued once by an admin and stored only as scrypt hashes.
 
+## Fresh-install provisioning
+
+`npm run provision-initial-state --workspace @urumi/gateway` is an operator CLI,
+not an HTTP endpoint. It requires runtime environment values for one initial
+admin username/key and the WooCommerce, Inventory, and Support MCP URLs. It
+creates the state only when the user and upstream tables are empty, saves only a
+hash of the supplied API key, prints no raw key, and does not alter an existing
+incompatible installation. The optional Helm provisioning Job is disabled by
+default and reads the initial key only from an operator-created Kubernetes
+Secret.
+
 ## Management APIs
 
 Admins only: `GET/POST /api/users`, `POST /api/users/:id/keys`, `DELETE /api/keys/:id`, `GET/POST /api/upstreams`, `PATCH/DELETE /api/upstreams/:id`, `GET /api/upstreams/health`, and `GET /api/audit?limit=1..500`. Members receive `403 {"error":"forbidden"}` for these routes.

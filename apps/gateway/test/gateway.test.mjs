@@ -15,6 +15,7 @@ import {
   UpstreamUrlPolicyError,
   UpstreamHealthReporter,
   handleApi,
+  loadInitialGatewayProvisioning,
   policyFromEnvironment,
 } from "../dist/index.js";
 import { postgresTestSkip } from "./test-database.mjs";
@@ -52,6 +53,26 @@ test("registers, edits, disables, removes, and never returns upstream credential
   assert.equal((await repository.update(created.id, { enabled: false })).enabled, false);
   await assert.rejects(repository.create(upstream("woo-commerce", "http://other.test/mcp")), /unique tool namespaces/);
   assert.equal(await repository.remove(created.id), true);
+});
+
+test("loads explicit initial provisioning only with all required non-secret configuration", () => {
+  const environment = {
+    GATEWAY_INITIAL_ADMIN_USERNAME: "initial-admin",
+    GATEWAY_INITIAL_ADMIN_API_KEY: "urumi_abcdefghijklmnopqrstuvwxyz0123456789",
+    GATEWAY_INITIAL_WOOCOMMERCE_URL: "http://release-woocommerce-mcp.urumi.svc.cluster.local:3000/mcp",
+    GATEWAY_INITIAL_INVENTORY_URL: "http://release-inventory-mcp.urumi.svc.cluster.local:3001/mcp",
+    GATEWAY_INITIAL_SUPPORT_URL: "http://release-support-mcp.urumi.svc.cluster.local:3002/mcp",
+  };
+  assert.deepEqual(loadInitialGatewayProvisioning(environment), {
+    adminUsername: "initial-admin",
+    adminApiKey: environment.GATEWAY_INITIAL_ADMIN_API_KEY,
+    upstreams: [
+      { name: "WooCommerce", url: environment.GATEWAY_INITIAL_WOOCOMMERCE_URL, timeoutMs: 10_000 },
+      { name: "Inventory", url: environment.GATEWAY_INITIAL_INVENTORY_URL, timeoutMs: 10_000 },
+      { name: "Support", url: environment.GATEWAY_INITIAL_SUPPORT_URL, timeoutMs: 10_000 },
+    ],
+  });
+  assert.throws(() => loadInitialGatewayProvisioning({ ...environment, GATEWAY_INITIAL_SUPPORT_URL: undefined }), /Initial gateway provisioning configuration is invalid/);
 });
 
 test("enforces a DNS-aware upstream URL policy on create and update", async () => {

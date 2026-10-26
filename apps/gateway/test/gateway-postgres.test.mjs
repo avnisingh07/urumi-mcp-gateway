@@ -4,7 +4,7 @@ import { once } from "node:events";
 import { createServer } from "node:http";
 import test from "node:test";
 import { Pool } from "pg";
-import { createPersistentApplication, PostgresGatewayStore, StreamableHttpUpstreamClient, UpstreamUrlPolicy } from "../dist/index.js";
+import { ChatAgent, GatewayCore, createPersistentApplication, PostgresGatewayStore, StreamableHttpUpstreamClient, UpstreamUrlPolicy } from "../dist/index.js";
 import { postgresTestSkip } from "./test-database.mjs";
 
 const databaseUrl = process.env.GATEWAY_TEST_DATABASE_URL;
@@ -38,7 +38,14 @@ test("PostgreSQL-backed authenticated HTTP API persists roles, keys, upstreams, 
         ? mcpResponse({ tools: [{ name: "lookup", inputSchema: { type: "object", properties: { id: { type: "integer", minimum: 1 } }, required: ["id"], additionalProperties: false } }] })
         : mcpResponse({ content: [{ type: "text", text: JSON.stringify({ id: request.params.arguments.id }) }] });
     });
-    server = createPersistentApplication(store, { client, healthTtlMs: 0 });
+    const fixtureToolName = `fixture_${suffix.replaceAll("-", "_")}__lookup`;
+    let chatReplies = 0;
+    const chatAgent = new ChatAgent(new GatewayCore(store, client, store), {
+      complete: async () => chatReplies++ === 0
+        ? { content: null, toolCalls: [{ id: "lookup-from-chat", name: fixtureToolName, arguments: { id: 9 } }] }
+        : { content: "Lookup completed.", toolCalls: [] },
+    }, 2);
+    server = createPersistentApplication(store, { client, healthTtlMs: 0, chatAgent });
     server.listen(0, "127.0.0.1");
     await once(server, "listening");
     const { port } = server.address();
@@ -98,15 +105,21 @@ test("PostgreSQL-backed authenticated HTTP API persists roles, keys, upstreams, 
 
     const tools = await request("/mcp", { method: "POST", key: memberKey.key, mcp: true, body: { jsonrpc: "2.0", id: 1, method: "tools/list", params: {} } });
     assert.equal(tools.status, 200);
-    assert.deepEqual(tools.body.result.tools.map((tool) => tool.name), [`fixture_${suffix.replaceAll("-", "_")}__lookup`]);
+    assert.deepEqual(tools.body.result.tools.map((tool) => tool.name), [fixtureToolName]);
     const toolName = tools.body.result.tools[0].name;
     const successfulCall = await request("/mcp", { method: "POST", key: memberKey.key, mcp: true, body: { jsonrpc: "2.0", id: 2, method: "tools/call", params: { name: toolName, arguments: { id: 7 } } } });
     assert.equal(successfulCall.body.result.content[0].text, '{"id":7}');
     const failedCall = await request("/mcp", { method: "POST", key: memberKey.key, mcp: true, body: { jsonrpc: "2.0", id: 3, method: "tools/call", params: { name: toolName, arguments: { id: 99 } } } });
     assert.equal(failedCall.body.result.isError, true);
     assert.equal((await request("/mcp", { method: "POST", key: secondKey.key, mcp: true, body: { jsonrpc: "2.0", id: 4, method: "tools/call", params: { name: toolName, arguments: { id: 8 } } } })).body.result.content[0].text, '{"id":8}');
+    const auditBeforeChat = await request("/api/audit", { key: adminKey.key });
+    const chat = await request("/api/chat", { method: "POST", key: secondKey.key, body: { message: "Look up 9", userId: member.id } });
+    assert.deepEqual(chat, { status: 200, body: { message: "Lookup completed.", status: "completed", traces: [{ toolName, status: "success", durationMs: chat.body.traces[0].durationMs, error: null, argumentKeys: ["id"] }] } });
     const audit = await request("/api/audit", { key: adminKey.key });
-    assert.deepEqual(audit.body.events.slice(0, 3).map((event) => [event.userId, event.upstreamId, event.toolName, event.outcome]), [[secondMember.id, upstream.id, toolName, "success"], [member.id, upstream.id, toolName, "failure"], [member.id, upstream.id, toolName, "success"]]);
+    const chatAudit = audit.body.events.filter((event) => !auditBeforeChat.body.events.some((before) => before.id === event.id));
+    assert.deepEqual(chatAudit.map((event) => [event.userId, event.upstreamId, event.toolName, event.outcome]), [[secondMember.id, upstream.id, toolName, "success"]]);
+    assert.ok(audit.body.events.some((event) => event.userId === member.id && event.toolName === toolName && event.outcome === "failure"));
+    assert.ok(audit.body.events.some((event) => event.userId === member.id && event.toolName === toolName && event.outcome === "success"));
 
     upstreamFailure = true;
     const failedHealth = await request("/api/upstreams/health", { key: adminKey.key });
@@ -121,8 +134,17 @@ test("PostgreSQL-backed authenticated HTTP API persists roles, keys, upstreams, 
     const secondStore = PostgresGatewayStore.fromConfig({ databaseUrl, credentialEncryptionKey: encryptionKey, urlPolicy: policy });
     assert.equal((await secondStore.get(upstream.id)).enabled, true);
     await secondStore.close();
+    upstreamFailure = false;
+    const remainingCreated = await request("/api/upstreams", { method: "POST", key: adminKey.key, body: { name: `Remaining-${suffix}`, url: "https://remaining.test/mcp", timeoutMs: 100 } });
+    assert.equal(remainingCreated.status, 201);
+    upstreamIds.push(remainingCreated.body.upstream.id);
     assert.equal((await request(`/api/upstreams/${upstream.id}`, { method: "DELETE", key: adminKey.key })).status, 204);
-    upstreamIds.pop();
+    const toolsAfterDeletion = await request("/mcp", { method: "POST", key: secondKey.key, mcp: true, body: { jsonrpc: "2.0", id: 6, method: "tools/list", params: {} } });
+    assert.equal(toolsAfterDeletion.status, 200);
+    assert.equal(toolsAfterDeletion.body.error, undefined);
+    assert.deepEqual(toolsAfterDeletion.body.result.tools.map((tool) => tool.name), [`remaining_${suffix.replaceAll("-", "_")}__lookup`]);
+    assert.equal(toolsAfterDeletion.body.result.tools.some((tool) => tool.name.startsWith(`fixture_${suffix.replaceAll("-", "_")}__`)), false);
+    upstreamIds.splice(upstreamIds.indexOf(upstream.id), 1);
   } finally {
     if (server?.listening) await new Promise((resolve) => server.close(resolve));
     if (upstreamIds.length) await pool.query("DELETE FROM gateway_audit_events WHERE upstream_id = ANY($1::uuid[])", [upstreamIds]);

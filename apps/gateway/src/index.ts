@@ -14,6 +14,7 @@ export { GatewayCore, GatewayToolError, validateJsonSchema } from "./gateway-cor
 export { InMemoryUpstreamRepository, publicConfiguration, upstreamNamespace, type UpstreamRepository, type UpstreamInput } from "./upstream-repository.js";
 export { StreamableHttpUpstreamClient, UpstreamError, type FetchImplementation } from "./upstream-client.js";
 export { PostgresGatewayStore, type AuthenticatedUser, type GatewayUser, type AuditEvent, type IssuedApiKey } from "./gateway-store.js";
+export { loadInitialGatewayProvisioning } from "./provision-initial-state.js";
 export { CredentialCipher, createApiKey, hashApiKey, verifyApiKey, type Role } from "./security.js";
 export { loadGatewayConfig, type GatewayConfig } from "./config.js";
 export { UpstreamHealthReporter, type UpstreamHealth } from "./upstream-health.js";

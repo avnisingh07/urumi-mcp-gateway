@@ -90,6 +90,61 @@ database URL, and upstream-credential encryption key. Helm preserves that
 Secret on upgrades with `lookup`; back up both its data and the PostgreSQL PVC
 before any production upgrade or restore.
 
+### Explicit fresh-install provisioning
+
+A Gateway migration creates tables only. For a brand-new database, use the
+explicit `provision-initial-state` command once to create the initial admin and
+the WooCommerce, Inventory, and Support registrations. It is deliberately not
+run by the Gateway process: automatic first-user creation would turn an
+environment mistake or an existing database into a privilege-escalation risk.
+
+Generate an API key outside the repository and store it in a password manager
+or secret manager before running the command. The command reads the key from
+`GATEWAY_INITIAL_ADMIN_API_KEY`, stores only its scrypt hash, and never prints
+the raw key. It is transactional: it creates exactly one admin plus the three
+registrations only if both the users and upstream tables are empty. A rerun with
+the same username and upstream configuration is a no-op; any other existing
+state fails without changing users, keys, credentials, or registrations.
+
+For a local fresh database, set the normal Gateway settings plus the following
+values and run after `npm run build`:
+
+```sh
+export GATEWAY_INITIAL_ADMIN_USERNAME=admin
+export GATEWAY_INITIAL_ADMIN_API_KEY="urumi_$(openssl rand -base64 32 | tr '+/' '-_' | tr -d '=')"
+export GATEWAY_INITIAL_WOOCOMMERCE_URL=http://127.0.0.1:3000/mcp
+export GATEWAY_INITIAL_INVENTORY_URL=http://127.0.0.1:3001/mcp
+export GATEWAY_INITIAL_SUPPORT_URL=http://127.0.0.1:3002/mcp
+npm run provision-initial-state --workspace @urumi/gateway
+```
+
+The local loopback URLs require the documented development-only private-network
+policy. Save the generated key before running the command; after success, use
+it as the first administrator's Bearer key and remove it from the shell
+environment/history according to the operator's secret-handling policy.
+
+For Helm, the Job is disabled by default. Before a **fresh** release, create an
+operator-managed Secret containing only the initial username and raw key, then
+enable the Job; its upstream URLs are rendered from the release name, namespace,
+and internal Service ports:
+
+```sh
+kubectl -n urumi create secret generic urumi-gateway-initial-admin \
+  --from-literal=GATEWAY_INITIAL_ADMIN_USERNAME=admin \
+  --from-literal=GATEWAY_INITIAL_ADMIN_API_KEY="$URUMI_INITIAL_ADMIN_API_KEY"
+helm upgrade --install urumi-store deploy/helm/urumi --namespace urumi \
+  --values deploy/helm/urumi/values.yaml --values deploy/helm/urumi/values-local.yaml \
+  --set gateway.initialProvisioning.enabled=true \
+  --set gateway.initialProvisioning.existingSecret=urumi-gateway-initial-admin
+```
+
+Keep that Secret protected until the operator has retrieved the key from their
+secret manager. After the Job has succeeded, disable/remove the provisioning
+Job in a later Helm upgrade and delete the one-time initial-admin Secret; the
+database retains only the key hash. Do not enable this Job for an existing
+database unless its current state exactly matches the documented initial
+configuration; otherwise it fails safely and makes no changes.
+
 The dashboard Ingress is separate from the storefront. It currently serves the
 existing empty placeholder application only—no login, API client, chat, or
 working management UI has been added. Its Nginx deployment proxies future

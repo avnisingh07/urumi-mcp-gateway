@@ -10,6 +10,8 @@ export type GatewayUser = { id: string; username: string; role: Role; createdAt:
 export type AuthenticatedUser = Pick<GatewayUser, "id" | "username" | "role">;
 export type IssuedApiKey = { id: string; key: string; createdAt: string };
 export type AuditEvent = { id: string; userId: string | null; upstreamId: string | null; upstreamName: string | null; toolName: string | null; occurredAt: string; durationMs: number; outcome: "success" | "failure" | "denied"; errorCode: string | null };
+export type InitialGatewayProvisioning = { adminUsername: string; adminApiKey: string; upstreams: ReadonlyArray<Pick<UpstreamInput, "name" | "url" | "timeoutMs">> };
+export type InitialGatewayProvisioningResult = { status: "initialized" | "already_initialized"; userId: string; upstreamIds: string[] };
 
 export class PostgresGatewayStore implements UpstreamRepository {
   constructor(private readonly pool: Pool, private readonly cipher: CredentialCipher, readonly urlPolicy = new UpstreamUrlPolicy()) {}
@@ -46,6 +48,57 @@ export class PostgresGatewayStore implements UpstreamRepository {
     const key = createApiKey(); const id = randomUUID(); const createdAt = new Date().toISOString();
     const result = await this.pool.query("INSERT INTO gateway_api_keys (id,user_id,key_hash) VALUES ($1,$2,$3) RETURNING created_at", [id, userId, await hashApiKey(key)]);
     if (result.rowCount !== 1) throw new Error("Could not issue API key."); return { id, key, createdAt: result.rows[0].created_at.toISOString() };
+  }
+  /**
+   * Creates the first gateway principal and the fixed initial upstream set in
+   * one transaction. It intentionally accepts a caller-supplied secret so a
+   * Kubernetes Secret can retain the only copy of the initial raw API key.
+   */
+  async provisionInitialState(input: InitialGatewayProvisioning): Promise<InitialGatewayProvisioningResult> {
+    if (!/^[a-zA-Z0-9_.-]{3,80}$/.test(input.adminUsername) || !/^urumi_[A-Za-z0-9_-]{32,}$/.test(input.adminApiKey) || input.upstreams.length !== 3) {
+      throw new Error("Initial gateway provisioning configuration is invalid.");
+    }
+    const names = new Set(input.upstreams.map((upstream) => upstream.name));
+    if (names.size !== input.upstreams.length || !["WooCommerce", "Inventory", "Support"].every((name) => names.has(name))) {
+      throw new Error("Initial gateway provisioning configuration is invalid.");
+    }
+    const validated = await Promise.all(input.upstreams.map(async (upstream) => {
+      const value = { ...upstream, id: randomUUID(), enabled: true } as UpstreamConfiguration;
+      await validateUpstream(value, this.urlPolicy);
+      return value;
+    }));
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+      await client.query("LOCK TABLE gateway_users, gateway_upstreams IN SHARE ROW EXCLUSIVE MODE");
+      const users = (await client.query("SELECT id,username,role FROM gateway_users ORDER BY username")).rows;
+      const upstreams = (await client.query("SELECT id,name,url,enabled,timeout_ms FROM gateway_upstreams ORDER BY name")).rows;
+      if (users.length || upstreams.length) {
+        const expected = new Map(validated.map((value) => [value.name, value]));
+        const compatible = users.length === 1
+          && users[0].username === input.adminUsername
+          && users[0].role === "admin"
+          && upstreams.length === validated.length
+          && upstreams.every((value) => {
+            const wanted = expected.get(value.name);
+            return wanted && value.url === wanted.url && value.enabled === true && Number(value.timeout_ms) === wanted.timeoutMs;
+          });
+        if (!compatible) throw new Error("Gateway is already initialized with incompatible state; provisioning will not modify it.");
+        await client.query("COMMIT");
+        return { status: "already_initialized", userId: String(users[0].id), upstreamIds: upstreams.map((value) => String(value.id)) };
+      }
+      const userId = randomUUID();
+      await client.query("INSERT INTO gateway_users (id,username,role) VALUES ($1,$2,'admin')", [userId, input.adminUsername]);
+      await client.query("INSERT INTO gateway_api_keys (id,user_id,key_hash) VALUES ($1,$2,$3)", [randomUUID(), userId, await hashApiKey(input.adminApiKey)]);
+      for (const upstream of validated) {
+        await client.query("INSERT INTO gateway_upstreams (id,name,url,enabled,credential_ciphertext,timeout_ms) VALUES ($1,$2,$3,true,NULL,$4)", [upstream.id, upstream.name, upstream.url, upstream.timeoutMs]);
+      }
+      await client.query("COMMIT");
+      return { status: "initialized", userId, upstreamIds: validated.map((upstream) => upstream.id) };
+    } catch (error) {
+      await client.query("ROLLBACK").catch(() => undefined);
+      throw error;
+    } finally { client.release(); }
   }
   async revokeApiKey(id: string): Promise<boolean> { return (await this.pool.query("UPDATE gateway_api_keys SET revoked_at=now() WHERE id=$1 AND revoked_at IS NULL", [id])).rowCount === 1; }
   async authenticateApiKey(key: string): Promise<AuthenticatedUser | undefined> {

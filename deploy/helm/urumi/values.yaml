@@ -117,6 +117,22 @@ internalMcpUpstreams:
       limits:
         cpu: 250m
         memory: 128Mi
+  support:
+    enabled: true
+    replicaCount: 1
+    image:
+      repository: urumi-support-mcp
+      tag: latest
+      pullPolicy: IfNotPresent
+    service:
+      port: 3002
+    resources:
+      requests:
+        cpu: 50m
+        memory: 64Mi
+      limits:
+        cpu: 250m
+        memory: 128Mi
 
 postgres:
   image:
@@ -160,6 +176,18 @@ gateway:
     limits:
       cpu: 500m
       memory: 256Mi
+  initialProvisioning:
+    # Opt in only for a brand-new database. The referenced Secret must be
+    # created by an operator and contains the one-time initial admin API key.
+    enabled: false
+    existingSecret: ""
+    resources:
+      requests:
+        cpu: 50m
+        memory: 64Mi
+      limits:
+        cpu: 250m
+        memory: 128Mi
 
 dashboard:
   replicaCount: 1
@@ -186,19 +214,3 @@ dashboard:
     limits:
       cpu: 200m
       memory: 128Mi
-  support:
-    enabled: true
-    replicaCount: 1
-    image:
-      repository: urumi-support-mcp
-      tag: latest
-      pullPolicy: IfNotPresent
-    service:
-      port: 3002
-    resources:
-      requests:
-        cpu: 50m
-        memory: 64Mi
-      limits:
-        cpu: 250m
-        memory: 128Mi
