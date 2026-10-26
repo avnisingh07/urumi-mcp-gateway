@@ -14,6 +14,5 @@ RUN npm run build --workspace @urumi/dashboard
 
 FROM nginxinc/nginx-unprivileged:1.27-alpine
 COPY apps/dashboard/deploy/nginx.conf.template /etc/nginx/templates/default.conf.template
-COPY apps/dashboard/deploy/index.html /usr/share/nginx/html/index.html
-COPY --from=build /app/apps/dashboard/dist /usr/share/nginx/html/assets
+COPY --from=build /app/apps/dashboard/dist /usr/share/nginx/html
 EXPOSE 8080

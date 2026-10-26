@@ -1,6 +1,9 @@
-import type { ReactElement } from "react";
+import { StrictMode } from "react";
+import { createRoot } from "react-dom/client";
+import { RouterProvider } from "@tanstack/react-router";
+import "./styles.css";
+import { getRouter } from "./router";
 
-/** Dashboard application scaffold. Screens and API integration begin in later milestones. */
-export function Dashboard(): ReactElement | null {
-  return null;
-}
+const root = document.getElementById("root");
+if (!root) throw new Error("Dashboard root element is missing.");
+createRoot(root).render(<StrictMode><RouterProvider router={getRouter()} /></StrictMode>);

@@ -14,5 +14,7 @@ server {
     proxy_set_header Host $host;
     proxy_set_header X-Forwarded-Proto $scheme;
   }
+  location = /gateway-healthz { proxy_pass http://${GATEWAY_SERVICE_HOST}:3100/healthz; }
+  location = /gateway-readyz { proxy_pass http://${GATEWAY_SERVICE_HOST}:3100/readyz; }
   location / { try_files $uri $uri/ /index.html; }
 }
