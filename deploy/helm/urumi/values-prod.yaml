@@ -1,0 +1,41 @@
+# Production-like k3s overrides. Create the referenced Secrets before deploying.
+wordpress:
+  persistence:
+    storageClass: ""
+  ingress:
+    enabled: true
+    ingressClassName: traefik
+    hostname: store.example.invalid
+    tls: true
+
+postgres:
+  persistence:
+    storageClass: ""
+    size: 10Gi
+  resources:
+    requests: { cpu: 250m, memory: 512Mi }
+    limits: { cpu: "1", memory: 1Gi }
+
+gateway:
+  image:
+    repository: registry.example.invalid/urumi-gateway
+    tag: latest
+  upstreamPolicy:
+    allowedHosts: "*.svc.cluster.local"
+    developmentAllowPrivate: false
+  resources:
+    requests: { cpu: 250m, memory: 256Mi }
+    limits: { cpu: "1", memory: 512Mi }
+
+dashboard:
+  image:
+    repository: registry.example.invalid/urumi-dashboard
+    tag: latest
+  ingress:
+    enabled: true
+    ingressClassName: traefik
+    hostname: dashboard.example.invalid
+    path: /
+    pathType: Prefix
+    tls: true
+    tlsSecretName: urumi-dashboard-tls

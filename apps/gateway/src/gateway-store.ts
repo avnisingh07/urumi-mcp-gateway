@@ -18,6 +18,7 @@ export class PostgresGatewayStore implements UpstreamRepository {
     return new PostgresGatewayStore(new Pool({ connectionString: config.databaseUrl }), new CredentialCipher(config.credentialEncryptionKey), config.urlPolicy);
   }
   async close(): Promise<void> { await this.pool.end(); }
+  async checkReady(): Promise<void> { await this.pool.query("SELECT 1"); }
   async migrate(migrationPath = new URL("../migrations/001_gateway_state.sql", import.meta.url)): Promise<void> {
     await this.pool.query(await readFile(migrationPath, "utf8"));
   }

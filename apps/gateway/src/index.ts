@@ -80,12 +80,13 @@ export function createPersistentApplication(store: PostgresGatewayStore, options
   return createServer((request, response) => {
     const url = new URL(request.url ?? "/", "http://localhost");
     if (url.pathname === "/mcp") { void handleMcp(request, response); return; }
+    if (request.method === "GET" && url.pathname === "/readyz") { void store.checkReady().then(() => json(response, 200, { status: "ready" }), () => json(response, 503, { status: "not_ready" })); return; }
     void handleApi(request, response, store, url, authenticate, health);
   });
 }
 
 export async function handleApi(request: import("node:http").IncomingMessage, response: import("node:http").ServerResponse, store: PostgresGatewayStore, url: URL, authenticate: GatewayAuthenticator, health: UpstreamHealthReporter): Promise<void> {
-  if (request.method === "GET" && url.pathname === "/healthz") return json(response, 200, { status: "ok" });
+  if (request.method === "GET" && (url.pathname === "/healthz" || url.pathname === "/readyz")) return json(response, 200, { status: "ok" });
   const webRequest = new Request(`http://gateway.local${url.pathname}${url.search}`, { method: request.method, headers: request.headers as HeadersInit });
   const user = await authenticate(webRequest);
   if (!user || typeof user === "boolean") return json(response, 401, { error: "unauthorized" });

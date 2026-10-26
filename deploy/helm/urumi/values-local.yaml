@@ -18,3 +18,12 @@ wordpress:
       wp option update home 'http://store.urumi.local:8081' --allow-root
       wp option update siteurl 'http://store.urumi.local:8081' --allow-root
       chmod u-w /bitnami/wordpress/wp-config.php
+
+dashboard:
+  ingress:
+    enabled: true
+    ingressClassName: traefik
+    hostname: dashboard.urumi.local
+    path: /
+    pathType: Prefix
+    tls: false

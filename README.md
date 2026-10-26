@@ -72,6 +72,65 @@ The Inventory and Support Helm Services are always internal `ClusterIP`
 Services. Build/load their images into the target cluster before the final
 `helm upgrade`; this repository does not deploy or restart live workloads.
 
+## Kubernetes Gateway, PostgreSQL, and dashboard scaffold (M7)
+
+The same chart now deploys a persistent PostgreSQL StatefulSet, an internal-only
+Gateway Service, and an internal dashboard Service. Gateway startup waits for
+PostgreSQL readiness and then applies the idempotent gateway migration at
+startup; it never drops or truncates existing state. The generated-once
+`urumi-gateway-credentials` Secret holds the PostgreSQL password, full internal
+database URL, and upstream-credential encryption key. Helm preserves that
+Secret on upgrades with `lookup`; back up both its data and the PostgreSQL PVC
+before any production upgrade or restore.
+
+The dashboard Ingress is separate from the storefront. It currently serves the
+existing empty placeholder application only—no login, API client, chat, or
+working management UI has been added. Its Nginx deployment proxies future
+browser `/api/` requests to the internal Gateway service, so the Gateway and
+upstream MCP services do not need public Ingresses.
+
+For local k3d, build and import the two new images before rendering or
+deploying. Use the cluster's actual name in place of `urumi` if different:
+
+```sh
+docker build -f apps/gateway/Dockerfile -t urumi-gateway:latest .
+docker build -f apps/dashboard/Dockerfile -t urumi-dashboard:latest .
+k3d image import -c urumi urumi-gateway:latest urumi-dashboard:latest
+```
+
+Add the dashboard host alongside the existing storefront host:
+
+```sh
+sudo sh -c 'echo "127.0.0.1 dashboard.urumi.local" >> /etc/hosts'
+```
+
+Production-like `values-prod.yaml` uses registry image names, larger PostgreSQL
+storage/resources, TLS-enabled dashboard ingress, and keeps
+`UPSTREAM_DEVELOPMENT_ALLOW_PRIVATE=false`. Both environments permit only the
+narrow Kubernetes service suffix (`*.svc.cluster.local`) for private upstream
+addresses. Before a production deployment, either let the chart generate the
+gateway Secret once or create it explicitly without committing values:
+
+```sh
+URUMI_POSTGRES_PASSWORD="$(openssl rand -hex 24)"
+URUMI_GATEWAY_ENCRYPTION_KEY="$(openssl rand -base64 32)"
+kubectl -n urumi create secret generic urumi-gateway-credentials \
+  --from-literal=postgres-password="$URUMI_POSTGRES_PASSWORD" \
+  --from-literal=database-url="postgresql://urumi_gateway:$URUMI_POSTGRES_PASSWORD@urumi-store-postgres:5432/urumi_gateway" \
+  --from-literal=upstream-credential-encryption-key="$URUMI_GATEWAY_ENCRYPTION_KEY"
+```
+
+The generated hexadecimal database password is URL-safe and must match in both
+Secret fields. Back up the PostgreSQL PVC/database and this Secret together. To
+render without applying changes:
+
+```sh
+helm lint deploy/helm/urumi --values deploy/helm/urumi/values.yaml --values deploy/helm/urumi/values-local.yaml
+sh scripts/verify-helm-template.sh
+helm template urumi-store deploy/helm/urumi --namespace urumi --values deploy/helm/urumi/values.yaml --values deploy/helm/urumi/values-local.yaml
+helm template urumi-store deploy/helm/urumi --namespace urumi --values deploy/helm/urumi/values.yaml --values deploy/helm/urumi/values-prod.yaml
+```
+
 ## Local WooCommerce store (M1)
 
 The M1 deployment uses the pinned Bitnami WordPress Helm chart with its bundled
