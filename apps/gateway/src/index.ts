@@ -8,6 +8,7 @@ import { loadGatewayConfig } from "./config.js";
 import { UpstreamHealthReporter } from "./upstream-health.js";
 import { StreamableHttpUpstreamClient } from "./upstream-client.js";
 import { UpstreamUrlPolicyError } from "./upstream-url-policy.js";
+import { ChatAgent, OpenAiCompatibleProvider, type ChatMessage } from "./chat-agent.js";
 
 export { GatewayCore, GatewayToolError, validateJsonSchema } from "./gateway-core.js";
 export { InMemoryUpstreamRepository, publicConfiguration, upstreamNamespace, type UpstreamRepository, type UpstreamInput } from "./upstream-repository.js";
@@ -17,6 +18,7 @@ export { CredentialCipher, createApiKey, hashApiKey, verifyApiKey, type Role } f
 export { loadGatewayConfig, type GatewayConfig } from "./config.js";
 export { UpstreamHealthReporter, type UpstreamHealth } from "./upstream-health.js";
 export { UpstreamUrlPolicy, UpstreamUrlPolicyError, policyFromEnvironment, type DnsResolver } from "./upstream-url-policy.js";
+export { ChatAgent, OpenAiCompatibleProvider, type ChatMessage, type ChatResult, type ChatTrace, type ChatProvider } from "./chat-agent.js";
 
 export type GatewayAuthenticator = (request: Request) => Promise<AuthenticatedUser | boolean | undefined>;
 
@@ -67,7 +69,7 @@ export function createApplication(repository: UpstreamRepository = new InMemoryU
 }
 
 /** Full M5 HTTP surface. All management routes are server-side admin-only. */
-export function createPersistentApplication(store: PostgresGatewayStore, options: { client?: StreamableHttpUpstreamClient; healthTtlMs?: number } = {}): Server {
+export function createPersistentApplication(store: PostgresGatewayStore, options: { client?: StreamableHttpUpstreamClient; healthTtlMs?: number; chatAgent?: ChatAgent } = {}): Server {
   const authenticate = async (request: Request) => {
     const value = request.headers.get("authorization");
     return value?.startsWith("Bearer ") ? store.authenticateApiKey(value.slice(7)) : undefined;
@@ -81,16 +83,24 @@ export function createPersistentApplication(store: PostgresGatewayStore, options
     const url = new URL(request.url ?? "/", "http://localhost");
     if (url.pathname === "/mcp") { void handleMcp(request, response); return; }
     if (request.method === "GET" && url.pathname === "/readyz") { void store.checkReady().then(() => json(response, 200, { status: "ready" }), () => json(response, 503, { status: "not_ready" })); return; }
-    void handleApi(request, response, store, url, authenticate, health);
+    void handleApi(request, response, store, url, authenticate, health, options.chatAgent);
   });
 }
 
-export async function handleApi(request: import("node:http").IncomingMessage, response: import("node:http").ServerResponse, store: PostgresGatewayStore, url: URL, authenticate: GatewayAuthenticator, health: UpstreamHealthReporter): Promise<void> {
+export async function handleApi(request: import("node:http").IncomingMessage, response: import("node:http").ServerResponse, store: PostgresGatewayStore, url: URL, authenticate: GatewayAuthenticator, health: UpstreamHealthReporter, chatAgent?: ChatAgent): Promise<void> {
   if (request.method === "GET" && (url.pathname === "/healthz" || url.pathname === "/readyz")) return json(response, 200, { status: "ok" });
   const webRequest = new Request(`http://gateway.local${url.pathname}${url.search}`, { method: request.method, headers: request.headers as HeadersInit });
   const user = await authenticate(webRequest);
   if (!user || typeof user === "boolean") return json(response, 401, { error: "unauthorized" });
   if (request.method === "GET" && url.pathname === "/api/status") return json(response, 200, { status: "ok", user: { username: user.username, role: user.role } });
+  if (request.method === "POST" && url.pathname === "/api/chat") {
+    try {
+      if (!chatAgent) return json(response, 503, { error: "chat_unavailable" });
+      const body = await readJson(request); const message = string(body.message); const history = chatHistory(body.history);
+      if (message.length > 8_000) throw new Error("invalid");
+      return json(response, 200, await chatAgent.respond(message, history, user));
+    } catch { return json(response, 400, { error: "invalid_request" }); }
+  }
   if (url.pathname.startsWith("/api/") && !isManagementAllowed(user)) return json(response, 403, { error: "forbidden" });
   try {
     const body = ["POST", "PATCH"].includes(request.method ?? "") ? await readJson(request) : {};
@@ -115,6 +125,7 @@ function json(response: import("node:http").ServerResponse, status: number, valu
 async function readJson(request: import("node:http").IncomingMessage): Promise<Record<string, unknown>> { const chunks: Buffer[] = []; for await (const chunk of request) { chunks.push(Buffer.from(chunk)); if (Buffer.concat(chunks).length > 1_048_576) throw new Error("too large"); } const parsed: unknown = JSON.parse(Buffer.concat(chunks).toString("utf8")); if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("invalid"); return parsed as Record<string, unknown>; }
 function string(value: unknown): string { if (typeof value !== "string") throw new Error("invalid"); return value; }
 function role(value: unknown): "admin" | "member" { if (value !== "admin" && value !== "member") throw new Error("invalid"); return value; }
+function chatHistory(value: unknown): ChatMessage[] { if (value === undefined) return []; if (!Array.isArray(value) || value.length > 12) throw new Error("invalid"); return value.map((item) => { if (!item || typeof item !== "object" || Array.isArray(item)) throw new Error("invalid"); const message = item as Record<string, unknown>; if ((message.role !== "user" && message.role !== "assistant") || typeof message.content !== "string" || message.content.length > 4_000) throw new Error("invalid"); return { role: message.role, content: message.content }; }); }
 function upstreamBody(body: Record<string, unknown>) { const enabled = "enabled" in body ? body.enabled : true; const credential = "credential" in body ? body.credential : undefined; if (typeof enabled !== "boolean" || (credential !== undefined && typeof credential !== "string")) throw new Error("invalid"); return { name: string(body.name), url: string(body.url), enabled, credential, timeoutMs: number(body.timeoutMs ?? 10_000) }; }
 function upstreamPatch(body: Record<string, unknown>) { const output: Record<string, unknown> = {}; if ("name" in body) output.name = string(body.name); if ("url" in body) output.url = string(body.url); if ("enabled" in body) { if (typeof body.enabled !== "boolean") throw new Error("invalid"); output.enabled = body.enabled; } if ("credential" in body) output.credential = string(body.credential); if ("timeoutMs" in body) output.timeoutMs = number(body.timeoutMs); return output; }
 function number(value: unknown): number { if (typeof value !== "number" || !Number.isInteger(value)) throw new Error("invalid"); return value; }
@@ -125,7 +136,9 @@ async function start(): Promise<void> {
   const config = loadGatewayConfig();
   const store = PostgresGatewayStore.fromConfig(config);
   await store.migrate();
-  createPersistentApplication(store).listen(config.port, "0.0.0.0", () => console.error(`Urumi gateway listening on port ${config.port}`));
+  const client = new StreamableHttpUpstreamClient(fetch, store.urlPolicy);
+  const chatAgent = config.chat ? new ChatAgent(new GatewayCore(store, client, store), new OpenAiCompatibleProvider(config.chat), config.chat.maxIterations) : undefined;
+  createPersistentApplication(store, { client, chatAgent }).listen(config.port, "0.0.0.0", () => console.error(`Urumi gateway listening on port ${config.port}`));
 }
 
 if (process.argv[1] && import.meta.url === new URL(`file://${process.argv[1]}`).href) {

@@ -257,3 +257,30 @@ but the current Node `fetch` transport does not pin the validated address for th
 TCP connection. A hostile DNS server could therefore rebind between validation and
 connection. Deploy production gateways with trusted DNS and egress policy; address
 pinning/custom connection dispatch is a remaining hardening task.
+
+## Server-side chat API (M8)
+
+`POST /api/chat` is a non-streaming API-key-authenticated backend contract for
+the future dashboard. It derives the caller only from `Authorization: Bearer
+<gateway API key>`; a user ID in the body is neither accepted nor used. Both
+admins and members may chat, while every tool invocation follows the existing
+GatewayCore discovery, validation, routing, disable checks, timeout handling,
+and audit attribution path.
+
+```json
+{"message":"Check stock for product 101","history":[{"role":"user","content":"Earlier question"}]}
+```
+
+The response is `{ "message", "traces", "status" }`. Each trace contains
+only the gateway tool name, argument keys, status, duration, and a safe error
+category—never raw tool output, API keys, upstream URLs, or credentials.
+Messages are limited to 8,000 characters, history to 12 short messages, tool
+results to 16,000 characters, and the loop to `CHAT_MAX_ITERATIONS`.
+
+The supported provider is an OpenAI-compatible Chat Completions endpoint.
+Set `CHAT_PROVIDER_BASE_URL`, `CHAT_PROVIDER_API_KEY`, and `CHAT_MODEL` on the
+Gateway (plus optional `CHAT_TIMEOUT_MS` and `CHAT_MAX_ITERATIONS`). Provider
+credentials remain server-side. If this configuration is incomplete,
+`POST /api/chat` returns `503 {"error":"chat_unavailable"}`. The dashboard
+is still a placeholder; this milestone does not provide browser login, chat UI,
+or streaming.
