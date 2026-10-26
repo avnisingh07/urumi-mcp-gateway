@@ -51,10 +51,17 @@ curl -X POST http://127.0.0.1:3100/api/upstreams \
 ```
 
 MCP Inspector should target `http://127.0.0.1:3100/mcp` with the existing API
-key as a Bearer token. `tools/list` will show `inventory__inventory_status`,
-`support__support_status`, and the enabled WooCommerce tools. Disabling an
-upstream through `PATCH /api/upstreams/:id` with `{"enabled":false}` removes
-its namespace immediately; discovery continues when any other upstream fails.
+key as a Bearer token. Each person must use their own key, issued once by an
+administrator with `POST /api/users/:id/keys`; the gateway never returns that
+raw key again. `tools/list` includes `inventory__get_stock`,
+`support__get_order_support_summary`, the diagnostic status tools, and enabled
+WooCommerce tools. Disabling an upstream through
+`PATCH /api/upstreams/:id` with `{"enabled":false}` removes its namespace
+immediately; an unreachable upstream is omitted while healthy namespaces remain
+available. Revoking a key with `DELETE /api/keys/:id` makes subsequent Inspector
+and other MCP requests using that key return `401`. See
+[`docs/api-contracts.md`](docs/api-contracts.md) for the complete implemented
+HTTP and MCP contract.
 
 To build images and render or deploy the Helm release manually (these commands
 do not register gateway upstreams), run:

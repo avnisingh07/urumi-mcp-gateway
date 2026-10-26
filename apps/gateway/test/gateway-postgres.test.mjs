@@ -63,6 +63,14 @@ test("PostgreSQL-backed authenticated HTTP API persists roles, keys, upstreams, 
     const storedKey = await pool.query("SELECT key_hash FROM gateway_api_keys WHERE id=$1", [memberKey.id]);
     assert.match(storedKey.rows[0].key_hash, /^scrypt\$/);
     assert.notEqual(storedKey.rows[0].key_hash, memberKey.key);
+    const secondMemberCreated = await request("/api/users", { method: "POST", key: adminKey.key, body: { username: `member-two-${suffix}`, role: "member" } });
+    assert.equal(secondMemberCreated.status, 201);
+    const secondMember = secondMemberCreated.body.user; userIds.push(secondMember.id);
+    const secondKeyResponse = await request(`/api/users/${secondMember.id}/keys`, { method: "POST", key: adminKey.key, body: {} });
+    assert.equal(secondKeyResponse.status, 201);
+    const secondKey = secondKeyResponse.body.apiKey;
+    const users = await request("/api/users", { key: adminKey.key });
+    assert.doesNotMatch(JSON.stringify(users.body), new RegExp(`${memberKey.key}|${secondKey.key}`));
 
     assert.equal((await request("/api/status", { key: memberKey.key })).status, 200);
     assert.equal((await request("/api/users", { key: memberKey.key })).status, 403);
@@ -96,8 +104,9 @@ test("PostgreSQL-backed authenticated HTTP API persists roles, keys, upstreams, 
     assert.equal(successfulCall.body.result.content[0].text, '{"id":7}');
     const failedCall = await request("/mcp", { method: "POST", key: memberKey.key, mcp: true, body: { jsonrpc: "2.0", id: 3, method: "tools/call", params: { name: toolName, arguments: { id: 99 } } } });
     assert.equal(failedCall.body.result.isError, true);
+    assert.equal((await request("/mcp", { method: "POST", key: secondKey.key, mcp: true, body: { jsonrpc: "2.0", id: 4, method: "tools/call", params: { name: toolName, arguments: { id: 8 } } } })).body.result.content[0].text, '{"id":8}');
     const audit = await request("/api/audit", { key: adminKey.key });
-    assert.deepEqual(audit.body.events.slice(0, 2).map((event) => [event.userId, event.upstreamId, event.toolName, event.outcome]), [[member.id, upstream.id, toolName, "failure"], [member.id, upstream.id, toolName, "success"]]);
+    assert.deepEqual(audit.body.events.slice(0, 3).map((event) => [event.userId, event.upstreamId, event.toolName, event.outcome]), [[secondMember.id, upstream.id, toolName, "success"], [member.id, upstream.id, toolName, "failure"], [member.id, upstream.id, toolName, "success"]]);
 
     upstreamFailure = true;
     const failedHealth = await request("/api/upstreams/health", { key: adminKey.key });
@@ -105,6 +114,9 @@ test("PostgreSQL-backed authenticated HTTP API persists roles, keys, upstreams, 
     assert.doesNotMatch(JSON.stringify(failedHealth.body), /never-return-this|changed\.test/);
     assert.equal((await request(`/api/keys/${memberKey.id}`, { method: "DELETE", key: adminKey.key })).status, 204);
     assert.equal((await request("/api/status", { key: memberKey.key })).status, 401);
+    assert.equal((await request("/mcp", { method: "POST", key: memberKey.key, mcp: true, body: { jsonrpc: "2.0", id: 5, method: "tools/list", params: {} } })).status, 401);
+    assert.equal((await request("/api/chat", { method: "POST", key: memberKey.key, body: { message: "hi" } })).status, 401);
+    assert.equal((await request("/api/status", { key: secondKey.key })).status, 200);
 
     const secondStore = PostgresGatewayStore.fromConfig({ databaseUrl, credentialEncryptionKey: encryptionKey, urlPolicy: policy });
     assert.equal((await secondStore.get(upstream.id)).enabled, true);
