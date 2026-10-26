@@ -23,7 +23,8 @@ export class ChatAgent {
         const started = Date.now(); const argumentKeys = isRecord(call.arguments) ? Object.keys(call.arguments).sort() : [];
         try {
           const result = await this.core.callTool(call.name, call.arguments, caller);
-          traces.push({ toolName: call.name, status: "success", durationMs: Date.now() - started, error: null, argumentKeys });
+          const toolError = result.isError === true;
+          traces.push({ toolName: call.name, status: toolError ? "failure" : "success", durationMs: Date.now() - started, error: toolError ? "tool_error" : null, argumentKeys });
           messages.push({ role: "tool", tool_call_id: call.id, content: truncate(JSON.stringify(result), 16_000) });
         } catch (error) {
           const safe = error instanceof GatewayToolError ? error.kind : "internal";

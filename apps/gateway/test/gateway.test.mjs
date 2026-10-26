@@ -337,6 +337,21 @@ test("uses one-way API-key hashes and authenticated audit records without argume
   assert.equal(Object.prototype.hasOwnProperty.call(events[0], "arguments"), false);
 });
 
+test("records an MCP tool error result as a failed audited operation", async () => {
+  const repository = new InMemoryUpstreamRepository(testUrlPolicy());
+  await repository.create(upstream("Inventory", "http://inventory.test/mcp"));
+  const events = [];
+  const core = new GatewayCore(repository, new StreamableHttpUpstreamClient(mockFetch({
+    "http://inventory.test/mcp": (request) => request.method === "tools/list"
+      ? mcpResponse({ tools: [tool("get_stock")] })
+      : mcpResponse({ content: [{ type: "text", text: '{"error":"not_found"}' }], isError: true }),
+  })), { recordAudit: async (event) => events.push(event) });
+  await core.discover();
+  const result = await core.callTool("inventory__get_stock", { id: 35 }, { id: "member-id" });
+  assert.equal(result.isError, true);
+  assert.deepEqual(events.map((event) => [event.userId, event.outcome, event.errorCode]), [["member-id", "failure", "tool_error"]]);
+});
+
 test("PostgreSQL state persists across store reinitialization", { skip: postgresTestSkip() }, async () => {
   const urlPolicy = new UpstreamUrlPolicy({ resolve: async () => ["203.0.113.10"] });
   const config = { databaseUrl: process.env.GATEWAY_TEST_DATABASE_URL, credentialEncryptionKey: Buffer.alloc(32, 9).toString("base64"), urlPolicy };

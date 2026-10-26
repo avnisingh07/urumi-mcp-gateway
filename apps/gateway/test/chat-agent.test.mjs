@@ -24,3 +24,14 @@ test("chat agent bounds iterations and sanitizes invalid tool failures", async (
   const result = await agent.respond("x", [], { id: "user" });
   assert.equal(result.status, "stopped"); assert.equal(result.traces[0].error, "invalid_arguments"); assert.deepEqual(result.traces[0].argumentKeys, ["product_id"]);
 });
+
+test("chat traces an MCP tool error response as a failure", async () => {
+  const repo = new InMemoryUpstreamRepository(policy); await repo.create({ name: "Inventory", url: "https://inventory.test/mcp", enabled: true, timeoutMs: 100 });
+  const core = new GatewayCore(repo, new StreamableHttpUpstreamClient(async (_url, init) => JSON.parse(init.body).method === "tools/list"
+    ? response({ tools: [{ name: "get_stock", inputSchema: { type: "object", properties: { product_id: { type: "integer", minimum: 1 } }, required: ["product_id"] } }] })
+    : response({ content: [{ type: "text", text: '{"error":"not_found"}' }], isError: true })));
+  const replies = [{ content: null, toolCalls: [{ id: "not-found", name: "inventory__get_stock", arguments: { product_id: 35 } }] }, { content: "No stock record was found.", toolCalls: [] }];
+  const result = await new ChatAgent(core, { complete: async () => replies.shift() }, 2).respond("stock?", [], { id: "user" });
+  assert.equal(result.status, "completed");
+  assert.deepEqual({ ...result.traces[0], durationMs: undefined }, { toolName: "inventory__get_stock", status: "failure", durationMs: undefined, error: "tool_error", argumentKeys: ["product_id"] });
+});

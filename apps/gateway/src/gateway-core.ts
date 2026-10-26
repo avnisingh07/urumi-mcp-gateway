@@ -45,7 +45,9 @@ export class GatewayCore {
     if (issues.length) return this.fail("invalid_arguments", "Tool arguments are invalid.", caller, tool.upstreamId, tool.upstreamName, name, startedAt, "failure");
     try {
       const result = await this.client.callTool(upstream, tool.upstreamToolName, arguments_ as Record<string, unknown>);
-      await this.record(caller, tool.upstreamId, tool.upstreamName, name, startedAt, "success", null);
+      // MCP tool errors are valid JSON-RPC transport responses, but they are
+      // still failed business operations and must not be audited as success.
+      await this.record(caller, tool.upstreamId, tool.upstreamName, name, startedAt, result.isError === true ? "failure" : "success", result.isError === true ? "tool_error" : null);
       return result;
     } catch (error) {
       if (error instanceof UpstreamError) {

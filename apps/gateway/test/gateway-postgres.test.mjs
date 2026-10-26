@@ -34,6 +34,7 @@ test("PostgreSQL-backed authenticated HTTP API persists roles, keys, upstreams, 
       if (upstreamFailure) throw new Error("credential=never-return-this");
       const request = JSON.parse(init.body);
       if (request.method === "tools/call" && request.params.arguments.id === 99) return new Response("sensitive upstream failure", { status: 500 });
+      if (request.method === "tools/call" && request.params.arguments.id === 35) return mcpResponse({ content: [{ type: "text", text: '{"error":"not_found"}' }], isError: true });
       return request.method === "tools/list"
         ? mcpResponse({ tools: [{ name: "lookup", inputSchema: { type: "object", properties: { id: { type: "integer", minimum: 1 } }, required: ["id"], additionalProperties: false } }] })
         : mcpResponse({ content: [{ type: "text", text: JSON.stringify({ id: request.params.arguments.id }) }] });
@@ -111,7 +112,11 @@ test("PostgreSQL-backed authenticated HTTP API persists roles, keys, upstreams, 
     assert.equal(successfulCall.body.result.content[0].text, '{"id":7}');
     const failedCall = await request("/mcp", { method: "POST", key: memberKey.key, mcp: true, body: { jsonrpc: "2.0", id: 3, method: "tools/call", params: { name: toolName, arguments: { id: 99 } } } });
     assert.equal(failedCall.body.result.isError, true);
+    const toolErrorCall = await request("/mcp", { method: "POST", key: memberKey.key, mcp: true, body: { jsonrpc: "2.0", id: 35, method: "tools/call", params: { name: toolName, arguments: { id: 35 } } } });
+    assert.equal(toolErrorCall.body.result.isError, true);
     assert.equal((await request("/mcp", { method: "POST", key: secondKey.key, mcp: true, body: { jsonrpc: "2.0", id: 4, method: "tools/call", params: { name: toolName, arguments: { id: 8 } } } })).body.result.content[0].text, '{"id":8}');
+    const auditAfterToolError = await request("/api/audit", { key: adminKey.key });
+    assert.ok(auditAfterToolError.body.events.some((event) => event.userId === member.id && event.toolName === toolName && event.outcome === "failure" && event.errorCode === "tool_error"));
     const auditBeforeChat = await request("/api/audit", { key: adminKey.key });
     const chat = await request("/api/chat", { method: "POST", key: secondKey.key, body: { message: "Look up 9", userId: member.id } });
     assert.deepEqual(chat, { status: 200, body: { message: "Lookup completed.", status: "completed", traces: [{ toolName, status: "success", durationMs: chat.body.traces[0].durationMs, error: null, argumentKeys: ["id"] }] } });
