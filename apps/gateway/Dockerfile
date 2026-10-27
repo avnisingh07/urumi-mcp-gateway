@@ -23,6 +23,7 @@ COPY --from=build --chown=node:node /app/packages/shared/package.json ./packages
 COPY --from=build --chown=node:node /app/packages/shared/dist ./packages/shared/dist
 COPY --from=build --chown=node:node /app/apps/gateway/package.json ./apps/gateway/package.json
 COPY --from=build --chown=node:node /app/apps/gateway/dist ./apps/gateway/dist
+COPY --from=build --chown=node:node /app/apps/gateway/migrations ./apps/gateway/migrations
 USER node
 EXPOSE 3100
 CMD ["node", "apps/gateway/dist/index.js"]

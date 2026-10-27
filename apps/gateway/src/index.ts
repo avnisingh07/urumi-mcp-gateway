@@ -143,5 +143,13 @@ async function start(): Promise<void> {
 }
 
 if (process.argv[1] && import.meta.url === new URL(`file://${process.argv[1]}`).href) {
-  void start().catch(() => { console.error("Gateway failed to start."); process.exitCode = 1; });
+  void start().catch((error: unknown) => {
+  console.error(
+    "Gateway failed to start:",
+    error instanceof Error
+      ? `${error.name}: ${error.message}\n${error.stack ?? ""}`
+      : "Unknown startup error"
+  );
+  process.exitCode = 1;
+});
 }
