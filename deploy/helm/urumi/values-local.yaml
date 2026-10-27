@@ -27,3 +27,11 @@ dashboard:
     path: /
     pathType: Prefix
     tls: false
+
+# Persist the working Gemini chat configuration through Helm upgrades.
+# The API key remains in the pre-created Kubernetes Secret, never in values.
+chat:
+  enabled: true
+  providerBaseUrl: https://generativelanguage.googleapis.com/v1beta/openai/
+  model: gemini-3.5-flash-lite
+  existingSecret: urumi-chat-provider

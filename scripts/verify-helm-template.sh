@@ -15,6 +15,10 @@ rg -F 'kind: StatefulSet' "$rendered" >/dev/null
 rg -F 'kind: Ingress' "$rendered" >/dev/null
 rg -F 'secretKeyRef: { name: urumi-gateway-credentials, key: database-url }' "$rendered" >/dev/null
 rg -F 'UPSTREAM_DEVELOPMENT_ALLOW_PRIVATE' "$rendered" >/dev/null
+rg -F 'CHAT_PROVIDER_BASE_URL' "$rendered" >/dev/null
+rg -F 'CHAT_PROVIDER_API_KEY' "$rendered" >/dev/null
+rg -F 'name: urumi-chat-provider' "$rendered" >/dev/null
+rg -F 'WOOCOMMERCE_CONSUMER_SECRET' "$rendered" >/dev/null
 rg -F 'value: "false"' "$rendered" >/dev/null
 for field in livenessProbe readinessProbe resources:; do
   rg -F "$field" "$rendered" >/dev/null
@@ -27,3 +31,4 @@ for environment in "$production"; do
 done
 ! rg -F 'gateway-initial-provisioning' "$production" >/dev/null
 rg -A1 -F 'name: UPSTREAM_DEVELOPMENT_ALLOW_PRIVATE' "$production" | rg -F 'value: "false"' >/dev/null
+! rg -F 'CHAT_PROVIDER_API_KEY' "$production" >/dev/null

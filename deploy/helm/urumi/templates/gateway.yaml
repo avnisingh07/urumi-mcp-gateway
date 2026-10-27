@@ -1,3 +1,4 @@
+{{- $chat := .Values.chat | default dict }}
 apiVersion: v1
 kind: Service
 metadata:
@@ -74,6 +75,21 @@ spec:
               value: {{ .Values.gateway.upstreamPolicy.allowedHosts | quote }}
             - name: UPSTREAM_DEVELOPMENT_ALLOW_PRIVATE
               value: {{ .Values.gateway.upstreamPolicy.developmentAllowPrivate | quote }}
+            {{- if $chat.enabled }}
+            - name: CHAT_PROVIDER_BASE_URL
+              value: {{ $chat.providerBaseUrl | quote }}
+            - name: CHAT_MODEL
+              value: {{ $chat.model | quote }}
+            - name: CHAT_TIMEOUT_MS
+              value: {{ $chat.timeoutMs | quote }}
+            - name: CHAT_MAX_ITERATIONS
+              value: {{ $chat.maxIterations | quote }}
+            - name: CHAT_PROVIDER_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $chat.existingSecret }}
+                  key: api-key
+            {{- end }}
           livenessProbe:
             httpGet: { path: /healthz, port: http }
             initialDelaySeconds: 15
