@@ -205,7 +205,7 @@ function toTool(v: unknown): ToolInfo {
 function toHealth(v: unknown, keyName?: string): UpstreamHealth {
   const o = obj(v);
   const tools = Array.isArray(o.tools) ? o.tools.map(toTool) : undefined;
-  const status = str(o.status)?.toLowerCase();
+  const status = (str(o.status) ?? str(o.state))?.toLowerCase();
   const reachable =
     typeof o.reachable === "boolean"
       ? o.reachable
