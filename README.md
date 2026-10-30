@@ -780,16 +780,46 @@ short messages, tool results to 16,000 characters, and the tool loop to
 
 ## Demo evidence
 
-Add the submitted recordings below. Use links that reviewers can open
-without requesting additional permissions.
+## Demo Videos
 
--   **Deployment and architecture:** \[Add demo video link\]
--   **External MCP Inspector connection and tool discovery:** \[Add demo
-    video link\]
--   **Tool execution across WooCommerce, Inventory, and Support:** \[Add
-    demo video link\]
--   **Authentication, authorization, and failure handling:** \[Add demo
-    video link after those tests are recorded\]
+The following demonstrations showcase the end-to-end application workflow,
+dashboard functionality, and AI-driven interaction across the integrated
+WooCommerce and MCP Gateway ecosystem.
+
+### 1. WooCommerce Store — End-to-End Storefront Workflow
+
+Demonstrates the WooCommerce administration and customer-facing storefront,
+including product management, browsing products, adding items to the cart,
+and completing an order checkout.
+
+**Demonstrated capabilities:**
+- WooCommerce administration and product management.
+- Customer-facing storefront and product browsing.
+- Cart and checkout workflow.
+- Order creation and verification.
+
+[Watch Demo 1 — Store https://drive.google.com/file/d/1BtqSc7G-NcqGe4eQcM-QHlDMX2XBOGGB/view?usp=share_link
+
+### 2. Dashboard and AI Agent — End-to-End Integration
+
+Demonstrates the dashboard functionality and AI agent interacting with the
+commerce system through natural-language prompts.
+
+**Demonstrated workflow:**
+1. Add a new product through the AI agent using a natural-language prompt.
+2. Verify that the product is available in the WooCommerce store.
+3. Create an order through the customer-facing storefront.
+4. Retrieve and verify the newly created order through the dashboard using
+   an AI agent prompt.
+
+**Demonstrated capabilities:**
+- Dashboard integration with backend services.
+- Natural-language interaction with the AI agent.
+- AI-driven product creation.
+- Order retrieval and verification.
+- Data consistency across the storefront and dashboard.
+
+[Watch Demo 2 — Dashboard and AI Agent]https://drive.google.com/file/d/1scGrlLe1vvIY9phWYcB0eHvFwF5bJcYM/view?usp=share_link
 
 ------------------------------------------------------------------------
 
