@@ -780,7 +780,6 @@ short messages, tool results to 16,000 characters, and the tool loop to
 
 ## Demo evidence
 
-## Demo Videos
 
 The following demonstrations showcase the end-to-end application workflow,
 dashboard functionality, and AI-driven interaction across the integrated
