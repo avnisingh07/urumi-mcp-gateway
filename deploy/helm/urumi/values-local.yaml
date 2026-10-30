@@ -35,3 +35,11 @@ chat:
   providerBaseUrl: https://generativelanguage.googleapis.com/v1beta/openai/
   model: gemini-3.5-flash-lite
   existingSecret: urumi-chat-provider
+  timeoutMs: 30000
+  maxIterations: 6
+gateway:
+  ingress:
+    enabled: true
+    className: traefik
+    host: gateway.urumi.local
+    path: /mcp
