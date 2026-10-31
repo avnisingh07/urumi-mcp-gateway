@@ -13,6 +13,8 @@ export const qk = {
   health: ["upstreams", "health"] as const,
   users: ["users"] as const,
   audit: ["audit"] as const,
+  myKeys: ["me", "keys"] as const,
+  myAudit: ["me", "audit"] as const,
 };
 
 export function useLiveness() {
@@ -22,18 +24,20 @@ export function useReadiness() {
   return useQuery({ queryKey: qk.readyz, queryFn: api.readyz, refetchInterval: 30_000, retry: 0 });
 }
 export function useUpstreams() {
-  const { authenticated } = useAuth();
-  return useQuery({ queryKey: qk.upstreams, queryFn: api.upstreams, enabled: authenticated, retry });
+  const { authenticated, isAdmin } = useAuth();
+  return useQuery({ queryKey: qk.upstreams, queryFn: api.upstreams, enabled: authenticated && isAdmin, retry });
 }
 export function useUpstreamHealth() {
-  const { authenticated } = useAuth();
-  return useQuery({ queryKey: qk.health, queryFn: api.upstreamHealth, enabled: authenticated, retry });
+  const { authenticated, isAdmin } = useAuth();
+  return useQuery({ queryKey: qk.health, queryFn: api.upstreamHealth, enabled: authenticated && isAdmin, retry });
 }
 export function useUsers() {
-  const { authenticated } = useAuth();
-  return useQuery({ queryKey: qk.users, queryFn: api.users, enabled: authenticated, retry });
+  const { authenticated, isAdmin } = useAuth();
+  return useQuery({ queryKey: qk.users, queryFn: api.users, enabled: authenticated && isAdmin, retry });
 }
 export function useAudit() {
-  const { authenticated } = useAuth();
-  return useQuery({ queryKey: qk.audit, queryFn: () => api.audit(100), enabled: authenticated, retry });
+  const { authenticated, isAdmin } = useAuth();
+  return useQuery({ queryKey: qk.audit, queryFn: () => api.audit(100), enabled: authenticated && isAdmin, retry });
 }
+export function useMyKeys() { const { authenticated } = useAuth(); return useQuery({ queryKey: qk.myKeys, queryFn: api.myKeys, enabled: authenticated, retry }); }
+export function useMyAudit() { const { authenticated } = useAuth(); return useQuery({ queryKey: qk.myAudit, queryFn: () => api.myAudit(25), enabled: authenticated, retry }); }

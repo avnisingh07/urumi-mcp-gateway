@@ -358,6 +358,23 @@ export const api = {
   },
   revokeKey: (keyId: string) => request(`/keys/${encodeURIComponent(keyId)}`, { method: "DELETE" }),
 
+  async myKeys(): Promise<import("./types").ApiKeyMeta[]> {
+    const raw = await request("/me/keys");
+    return list(raw, "keys", "data").map((value) => {
+      const key = obj(value);
+      return { id: str(key.id) ?? "", createdAt: str(key.createdAt) ?? str(key.created_at), revoked: key.revoked === true || !!key.revokedAt || !!key.revoked_at };
+    });
+  },
+  async issueMyKey(): Promise<IssuedKey> {
+    const o = obj(await request("/me/keys", { method: "POST", body: {} }));
+    const inner = obj(o.apiKey ?? o.key);
+    return { id: str(inner.id) ?? str(o.id), rawKey: str(inner.key) ?? str(inner.rawKey) ?? str(o.key) ?? str(o.rawKey) ?? null };
+  },
+  revokeMyKey: (keyId: string) => request(`/me/keys/${encodeURIComponent(keyId)}`, { method: "DELETE" }),
+  async myAudit(limit = 100): Promise<AuditRecord[]> {
+    return list(await request(`/me/audit?limit=${limit}`), "events", "data").map(toAudit);
+  },
+
   async audit(limit = 100): Promise<AuditRecord[]> {
     return list(await request(`/audit?limit=${limit}`), "events", "records", "entries", "audit", "data").map(toAudit);
   },

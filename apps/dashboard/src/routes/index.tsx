@@ -18,6 +18,7 @@ import { useAudit, useLiveness, useReadiness, useUpstreamHealth, useUpstreams } 
 import { formatDuration, formatRelative } from "@/lib/format";
 import type { UseQueryResult } from "@tanstack/react-query";
 import type { ProbeResult } from "@/lib/api-client";
+import { useAuth } from "@/lib/auth";
 
 export const Route = createFileRoute("/")({
   head: () => ({
@@ -53,6 +54,7 @@ function ProbeCard({ label, path, q }: { label: string; path: string; q: UseQuer
 }
 
 function Overview() {
+  const { isAdmin, user } = useAuth();
   const qc = useQueryClient();
   const live = useLiveness();
   const ready = useReadiness();
@@ -73,6 +75,16 @@ function Overview() {
   const failures = records.filter((r) => r.outcome === "error").length;
 
   const refreshing = [live, ready, ups, health, audit].some((q) => q.isFetching);
+
+  if (!isAdmin) return (
+    <div className="space-y-6">
+      <PageHeader title={`Welcome, ${user?.username ?? "member"}`} description="Use AI Chat or create a personal API key to connect an MCP client to every enabled upstream tool." />
+      <div className="grid gap-4 md:grid-cols-2">
+        <Panel title="AI Chat"><p className="text-sm text-muted-foreground">Ask the assistant to use Gateway tools on your behalf. Calls are attributed to your account.</p><Link to="/chat" className="mt-4 inline-flex text-sm text-primary">Open AI Chat <ArrowRight className="ml-1 h-4 w-4" /></Link></Panel>
+        <Panel title="Your API keys"><p className="text-sm text-muted-foreground">Generate and revoke your personal client keys. Active keys can discover and execute all enabled tools.</p><Link to="/team" className="mt-4 inline-flex text-sm text-primary">Manage API keys <ArrowRight className="ml-1 h-4 w-4" /></Link></Panel>
+      </div>
+    </div>
+  );
 
   return (
     <div className="space-y-6">

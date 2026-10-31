@@ -13,7 +13,7 @@ import { ChatAgent, OpenAiCompatibleProvider, type ChatMessage } from "./chat-ag
 export { GatewayCore, GatewayToolError, validateJsonSchema } from "./gateway-core.js";
 export { InMemoryUpstreamRepository, publicConfiguration, upstreamNamespace, type UpstreamRepository, type UpstreamInput } from "./upstream-repository.js";
 export { StreamableHttpUpstreamClient, UpstreamError, type FetchImplementation } from "./upstream-client.js";
-export { PostgresGatewayStore, type AuthenticatedUser, type GatewayUser, type AuditEvent, type IssuedApiKey } from "./gateway-store.js";
+export { PostgresGatewayStore, type AuthenticatedUser, type GatewayUser, type AuditEvent, type IssuedApiKey, type ApiKeyMetadata } from "./gateway-store.js";
 export { loadInitialGatewayProvisioning } from "./provision-initial-state.js";
 export { CredentialCipher, createApiKey, hashApiKey, verifyApiKey, type Role } from "./security.js";
 export { loadGatewayConfig, type GatewayConfig } from "./config.js";
@@ -102,15 +102,28 @@ export async function handleApi(request: import("node:http").IncomingMessage, re
       return json(response, 200, await chatAgent.respond(message, history, user));
     } catch { return json(response, 400, { error: "invalid_request" }); }
   }
+  if (request.method === "GET" && url.pathname === "/api/me/keys") return json(response, 200, { keys: await store.listApiKeys(user.id) });
+  if (request.method === "POST" && url.pathname === "/api/me/keys") return json(response, 201, { apiKey: await store.issueApiKey(user.id) });
+  const ownKeyMatch = url.pathname.match(/^\/api\/me\/keys\/([\w-]+)$/);
+  if (request.method === "DELETE" && ownKeyMatch) {
+    const revoked = await store.revokeApiKeyForUser(ownKeyMatch[1], user.id);
+    if (revoked) await store.recordAudit({ userId: user.id, upstreamId: null, upstreamName: null, toolName: "api_key_revoke", durationMs: 0, outcome: "success", errorCode: null });
+    return json(response, revoked ? 204 : 404);
+  }
+  if (request.method === "GET" && url.pathname === "/api/me/audit") return json(response, 200, { events: await store.listAuditForUser(user.id, Number(url.searchParams.get("limit") ?? "100")) });
   if (url.pathname.startsWith("/api/") && !isManagementAllowed(user)) return json(response, 403, { error: "forbidden" });
   try {
     const body = ["POST", "PATCH"].includes(request.method ?? "") ? await readJson(request) : {};
-    if (request.method === "GET" && url.pathname === "/api/users") return json(response, 200, { users: await store.listUsers() });
+    if (request.method === "GET" && url.pathname === "/api/users") return json(response, 200, { users: await Promise.all((await store.listUsers()).map(async (account) => ({ ...account, keys: await store.listApiKeys(account.id) }))) });
     if (request.method === "POST" && url.pathname === "/api/users") return json(response, 201, { user: await store.createUser(string(body.username), role(body.role)) });
     const keyMatch = url.pathname.match(/^\/api\/users\/([\w-]+)\/keys$/);
     if (request.method === "POST" && keyMatch) return json(response, 201, { apiKey: await store.issueApiKey(keyMatch[1]) });
     const revokeMatch = url.pathname.match(/^\/api\/keys\/([\w-]+)$/);
-    if (request.method === "DELETE" && revokeMatch) return json(response, (await store.revokeApiKey(revokeMatch[1])) ? 204 : 404);
+    if (request.method === "DELETE" && revokeMatch) {
+      const revoked = await store.revokeApiKey(revokeMatch[1]);
+      if (revoked) await store.recordAudit({ userId: user.id, upstreamId: null, upstreamName: null, toolName: "api_key_revoke", durationMs: 0, outcome: "success", errorCode: null });
+      return json(response, revoked ? 204 : 404);
+    }
     if (request.method === "GET" && url.pathname === "/api/upstreams") return json(response, 200, { upstreams: (await store.list()).map((value) => ({ id: value.id, name: value.name, url: value.url, enabled: value.enabled, timeoutMs: value.timeoutMs })) });
     if (request.method === "GET" && url.pathname === "/api/upstreams/health") return json(response, 200, { upstreams: await health.report() });
     if (request.method === "POST" && url.pathname === "/api/upstreams") return json(response, 201, { upstream: publicUpstream(await store.create(upstreamBody(body))) });

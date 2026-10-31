@@ -12,7 +12,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { qk, useUsers } from "@/hooks/use-gateway";
+import { qk, useMyKeys, useUsers } from "@/hooks/use-gateway";
 import { api, errorMessage } from "@/lib/api-client";
 import { useAuth } from "@/lib/auth";
 import { formatTime } from "@/lib/format";
@@ -120,10 +120,12 @@ function TeamPage() {
   const qc = useQueryClient();
   const { isAdmin, user: me } = useAuth();
   const users = useUsers();
+  const myKeys = useMyKeys();
   const [createOpen, setCreateOpen] = useState(false);
   const [issueFor, setIssueFor] = useState<TeamUser | null>(null);
   const [issued, setIssued] = useState<{ key: IssuedKey; user: TeamUser } | null>(null);
   const [revoke, setRevoke] = useState<{ key: ApiKeyMeta; user: TeamUser } | null>(null);
+  const [revokeOwnKey, setRevokeOwnKey] = useState<ApiKeyMeta | null>(null);
 
   const issue = useMutation({
     mutationFn: (u: TeamUser) => api.issueKey(u.id),
@@ -143,6 +145,42 @@ function TeamPage() {
     },
     onError: (e) => toast.error("Could not revoke key", { description: errorMessage(e) }),
   });
+
+  const issueOwn = useMutation({
+    mutationFn: api.issueMyKey,
+    onSuccess: (key) => {
+      if (me) setIssued({ key, user: { id: me.id, username: me.username, role: me.role, keys: [] } });
+      qc.invalidateQueries({ queryKey: qk.myKeys });
+    },
+    onError: (e) => toast.error("Could not issue key", { description: errorMessage(e) }),
+  });
+  const revokeOwn = useMutation({
+    mutationFn: (key: ApiKeyMeta) => api.revokeMyKey(key.id),
+    onSuccess: () => { toast.success("Key revoked"); setRevokeOwnKey(null); qc.invalidateQueries({ queryKey: qk.myKeys }); },
+    onError: (e) => toast.error("Could not revoke key", { description: errorMessage(e) }),
+  });
+
+  if (!isAdmin) return (
+    <div className="space-y-6">
+      <PageHeader title="My API Keys" description="Create and manage only the API keys associated with your account. Each active key can discover and use every enabled Gateway tool." actions={<Button size="sm" onClick={() => issueOwn.mutate()} disabled={issueOwn.isPending}><KeyRound className="h-3.5 w-3.5" /> {issueOwn.isPending ? "Creating…" : "Generate key"}</Button>} />
+      <Panel title="Your keys">
+        {myKeys.isLoading ? <TableSkeleton rows={3} cols={3} /> : myKeys.isError ? <ErrorState error={myKeys.error} onRetry={() => myKeys.refetch()} /> : !myKeys.data?.length ? <EmptyState icon={<KeyRound className="h-5 w-5" />} title="No API keys yet" description="Generate a key to use the Gateway from MCP Inspector, Claude Code, or Cursor." /> : (
+          <div className="divide-y divide-border">{myKeys.data.map((key) => <div key={key.id} className="flex items-center gap-3 px-4 py-3"><div className="min-w-0 flex-1"><div className="font-mono text-xs">{key.id}</div><div className="mt-1 text-[11px] text-muted-foreground">Created {formatTime(key.createdAt)}</div></div>{key.revoked ? <StatusBadge tone="neutral">revoked</StatusBadge> : <><StatusBadge tone="success">active</StatusBadge><Button variant="ghost" size="sm" className="text-danger" disabled={revokeOwn.isPending} onClick={() => setRevokeOwnKey(key)}><Trash2 className="h-3.5 w-3.5" /> Revoke</Button></>}</div>)}</div>
+        )}
+      </Panel>
+      <IssuedKeyDialog issued={issued?.key ?? null} user={issued?.user ?? null} onClose={() => setIssued(null)} />
+      <ConfirmDialog
+        open={!!revokeOwnKey}
+        onOpenChange={(o) => !o && setRevokeOwnKey(null)}
+        title="Revoke your API key?"
+        description={<>Future requests using <span className="font-mono text-foreground">{revokeOwnKey?.label ?? revokeOwnKey?.id}</span> will be rejected. Any client configured with this key will lose access.</>}
+        confirmLabel="Revoke key"
+        destructive
+        loading={revokeOwn.isPending}
+        onConfirm={() => revokeOwnKey && revokeOwn.mutate(revokeOwnKey)}
+      />
+    </div>
+  );
 
   const list = users.data ?? [];
   const keysExposed = list.some((u) => u.keys !== undefined);

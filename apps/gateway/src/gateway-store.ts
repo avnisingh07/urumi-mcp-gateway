@@ -9,10 +9,13 @@ import { UpstreamUrlPolicy } from "./upstream-url-policy.js";
 export type GatewayUser = { id: string; username: string; role: Role; createdAt: string };
 export type AuthenticatedUser = Pick<GatewayUser, "id" | "username" | "role">;
 export type IssuedApiKey = { id: string; key: string; createdAt: string };
+export type ApiKeyMetadata = { id: string; createdAt: string; revokedAt: string | null };
 export type AuditEvent = { id: string; userId: string | null; upstreamId: string | null; upstreamName: string | null; toolName: string | null; occurredAt: string; durationMs: number; outcome: "success" | "failure" | "denied"; errorCode: string | null };
 export type InitialGatewayProvisioning = { adminUsername: string; adminApiKey: string; upstreams: ReadonlyArray<Pick<UpstreamInput, "name" | "url" | "timeoutMs">> };
 export type InitialGatewayProvisioningResult = { status: "initialized" | "already_initialized"; userId: string; upstreamIds: string[] };
-
+function isRole(value: unknown): value is Role {
+  return value === "admin" || value === "member";
+}
 export class PostgresGatewayStore implements UpstreamRepository {
   constructor(private readonly pool: Pool, private readonly cipher: CredentialCipher, readonly urlPolicy = new UpstreamUrlPolicy()) {}
 
@@ -44,7 +47,11 @@ export class PostgresGatewayStore implements UpstreamRepository {
     const id = randomUUID(); const result = await this.pool.query("INSERT INTO gateway_users (id,username,role) VALUES ($1,$2,$3) RETURNING *", [id, username, role]); return toUser(result.rows[0]);
   }
   async listUsers(): Promise<GatewayUser[]> { return (await this.pool.query("SELECT * FROM gateway_users ORDER BY username")).rows.map(toUser); }
+  async getUser(id: string): Promise<GatewayUser | undefined> { const result = await this.pool.query("SELECT * FROM gateway_users WHERE id=$1", [id]); return result.rows[0] && toUser(result.rows[0]); }
   async issueApiKey(userId: string): Promise<IssuedApiKey> {
+    const user = await this.getUser(userId);
+    if (!user) throw new Error("User not found.");
+
     const key = createApiKey(); const id = randomUUID(); const createdAt = new Date().toISOString();
     const result = await this.pool.query("INSERT INTO gateway_api_keys (id,user_id,key_hash) VALUES ($1,$2,$3) RETURNING created_at", [id, userId, await hashApiKey(key)]);
     if (result.rowCount !== 1) throw new Error("Could not issue API key."); return { id, key, createdAt: result.rows[0].created_at.toISOString() };
@@ -101,6 +108,12 @@ export class PostgresGatewayStore implements UpstreamRepository {
     } finally { client.release(); }
   }
   async revokeApiKey(id: string): Promise<boolean> { return (await this.pool.query("UPDATE gateway_api_keys SET revoked_at=now() WHERE id=$1 AND revoked_at IS NULL", [id])).rowCount === 1; }
+  async listApiKeys(userId: string): Promise<ApiKeyMetadata[]> {
+    return (await this.pool.query("SELECT id,created_at,revoked_at FROM gateway_api_keys WHERE user_id=$1 ORDER BY created_at DESC", [userId])).rows.map((row) => ({ id: row.id, createdAt: row.created_at.toISOString(), revokedAt: row.revoked_at?.toISOString() ?? null }));
+  }
+  async revokeApiKeyForUser(keyId: string, userId: string): Promise<boolean> {
+    return (await this.pool.query("UPDATE gateway_api_keys SET revoked_at=now() WHERE id=$1 AND user_id=$2 AND revoked_at IS NULL", [keyId, userId])).rowCount === 1;
+  }
   async authenticateApiKey(key: string): Promise<AuthenticatedUser | undefined> {
     const rows = (await this.pool.query("SELECT k.key_hash,u.id,u.username,u.role FROM gateway_api_keys k JOIN gateway_users u ON u.id=k.user_id WHERE k.revoked_at IS NULL")).rows;
     for (const row of rows) if (await verifyApiKey(key, row.key_hash)) return { id: row.id, username: row.username, role: row.role };
@@ -111,7 +124,11 @@ export class PostgresGatewayStore implements UpstreamRepository {
   }
   async listAudit(limit = 100): Promise<AuditEvent[]> {
     const safeLimit = Math.max(1, Math.min(limit, 500));
-    return (await this.pool.query("SELECT * FROM gateway_audit_events ORDER BY occurred_at DESC LIMIT $1", [safeLimit])).rows.map((row) => ({ id: row.id, userId: row.user_id, upstreamId: row.upstream_id, upstreamName: row.upstream_name, toolName: row.tool_name, occurredAt: row.occurred_at.toISOString(), durationMs: row.duration_ms, outcome: row.outcome, errorCode: row.error_code }));
+    return (await this.pool.query("SELECT * FROM gateway_audit_events ORDER BY occurred_at DESC LIMIT $1", [safeLimit])).rows.map(toAuditEvent);
+  }
+  async listAuditForUser(userId: string, limit = 100): Promise<AuditEvent[]> {
+    const safeLimit = Math.max(1, Math.min(limit, 500));
+    return (await this.pool.query("SELECT * FROM gateway_audit_events WHERE user_id=$1 ORDER BY occurred_at DESC LIMIT $2", [userId, safeLimit])).rows.map(toAuditEvent);
   }
   private toUpstream(row: Record<string, unknown>): UpstreamConfiguration { return { id: String(row.id), name: String(row.name), url: String(row.url), enabled: Boolean(row.enabled), credential: row.credential_ciphertext ? this.cipher.decrypt(String(row.credential_ciphertext)) : undefined, timeoutMs: Number(row.timeout_ms) }; }
   private async assertNamespaceAvailable(name: string, ignoredId: string): Promise<void> {
@@ -123,6 +140,18 @@ export class PostgresGatewayStore implements UpstreamRepository {
 
 async function validateUpstream(value: UpstreamConfiguration, urlPolicy: UpstreamUrlPolicy): Promise<void> { upstreamNamespace(value.name); await urlPolicy.validate(value.url); if (!Number.isInteger(value.timeoutMs) || value.timeoutMs < 100 || value.timeoutMs > 30_000) throw new Error("Upstream configuration is invalid."); }
 function toUser(row: Record<string, unknown>): GatewayUser { return { id: String(row.id), username: String(row.username), role: row.role as Role, createdAt: new Date(String(row.created_at)).toISOString() }; }
-function isRole(role: string): role is Role { return role === "admin" || role === "member"; }
+function toAuditEvent(row: Record<string, unknown>): AuditEvent {
+  return {
+    id: String(row.id),
+    userId: row.user_id == null ? null : String(row.user_id),
+    upstreamId: row.upstream_id == null ? null : String(row.upstream_id),
+    upstreamName: row.upstream_name == null ? null : String(row.upstream_name),
+    toolName: row.tool_name == null ? null : String(row.tool_name),
+    occurredAt: new Date(String(row.occurred_at)).toISOString(),
+    durationMs: Number(row.duration_ms),
+    outcome: row.outcome as AuditEvent["outcome"],
+    errorCode: row.error_code == null ? null : String(row.error_code),
+  };
+}
 export { publicConfiguration };
 export type { PoolConfig };

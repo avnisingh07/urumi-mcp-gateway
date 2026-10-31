@@ -35,9 +35,10 @@ export function Logo() {
 
 function NavList({ onNavigate }: { onNavigate?: (() => void) | undefined }) {
   const path = useRouterState({ select: (s) => s.location.pathname });
+  const { isAdmin } = useAuth();
   return (
     <nav className="flex flex-col gap-0.5" aria-label="Main">
-      {nav.map((item) => {
+      {nav.filter((item) => isAdmin || item.to === "/" || item.to === "/team" || item.to === "/chat").map((item) => {
         const active = item.to === "/" ? path === "/" : path.startsWith(item.to);
         return (
           <Link
